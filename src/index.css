@@ -1,0 +1,7 @@
+body {
+  background-color: #111827; /* Este es un gris oscuro de Tailwind (gray-900) */
+  /* ... resto de tus estilos ... */
+}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

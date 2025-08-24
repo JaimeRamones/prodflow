@@ -1,0 +1,32 @@
+[debug] [2025-08-21T18:48:01.738Z] ----------------------------------------------------------------------
+[debug] [2025-08-21T18:48:01.740Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\MasterRace\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js deploy --only functions
+[debug] [2025-08-21T18:48:01.741Z] CLI Version:   14.12.1
+[debug] [2025-08-21T18:48:01.741Z] Platform:      win32
+[debug] [2025-08-21T18:48:01.741Z] Node Version:  v22.18.0
+[debug] [2025-08-21T18:48:01.741Z] Time:          Thu Aug 21 2025 15:48:01 GMT-0300 (hora estándar de Argentina)
+[debug] [2025-08-21T18:48:01.741Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2025-08-21T18:48:01.911Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2025-08-21T18:48:01.911Z] > authorizing via signed-in user (jaimeramones21@gmail.com)
+[debug] [2025-08-21T18:48:01.911Z] [iam] checking project prodflow-d297d for permissions ["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]
+[debug] [2025-08-21T18:48:01.912Z] Checked if tokens are valid: true, expires at: 1755805482404
+[debug] [2025-08-21T18:48:01.912Z] Checked if tokens are valid: true, expires at: 1755805482404
+[debug] [2025-08-21T18:48:01.913Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/prodflow-d297d:testIamPermissions [none]
+[debug] [2025-08-21T18:48:01.913Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/prodflow-d297d:testIamPermissions x-goog-quota-user=projects/prodflow-d297d
+[debug] [2025-08-21T18:48:01.913Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/prodflow-d297d:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[debug] [2025-08-21T18:48:02.767Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/prodflow-d297d:testIamPermissions 200
+[debug] [2025-08-21T18:48:02.767Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/prodflow-d297d:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[debug] [2025-08-21T18:48:02.767Z] Checked if tokens are valid: true, expires at: 1755805482404
+[debug] [2025-08-21T18:48:02.767Z] Checked if tokens are valid: true, expires at: 1755805482404
+[debug] [2025-08-21T18:48:02.767Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/prodflow-d297d/serviceAccounts/prodflow-d297d@appspot.gserviceaccount.com:testIamPermissions [none]
+[debug] [2025-08-21T18:48:02.767Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/prodflow-d297d/serviceAccounts/prodflow-d297d@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2025-08-21T18:48:03.593Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/prodflow-d297d/serviceAccounts/prodflow-d297d@appspot.gserviceaccount.com:testIamPermissions 200
+[debug] [2025-08-21T18:48:03.593Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/prodflow-d297d/serviceAccounts/prodflow-d297d@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[info] 
+[info] === Deploying to 'prodflow-d297d'...
+[info] 
+[info] i  deploying functions 
+[info] +  functions: Finished running predeploy script. 
+[debug] [2025-08-21T18:48:03.596Z] Checked if tokens are valid: true, expires at: 1755805482404
+[debug] [2025-08-21T18:48:03.596Z] Checked if tokens are valid: true, expires at: 1755805482404
+[debug] [2025-08-21T18:48:03.596Z] >>> [apiv2][query] GET https://cloudresourcemanager.googleapis.com/v1/projects/prodflow-d297d [none]
