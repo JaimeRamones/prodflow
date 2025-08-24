@@ -306,5 +306,5 @@ const App = () => (
         <AppOrchestrator />
     </AppProvider>
 );
-
+// ... el resto de tu código
 export default App;
