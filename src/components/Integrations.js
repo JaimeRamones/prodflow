@@ -182,7 +182,7 @@ const MercadoLibreIntegration = () => {
 
     // No olvides poner tus variables reales aquí
     const MELI_APP_ID = '322796455561380'; 
-    const MELI_REDIRECT_URI = 'https://88c04c33df3d.ngrok-free.app'; 
+    const MELI_REDIRECT_URI = 'https://prodflow-jr.vercel.app'; 
 
     useEffect(() => {
         const handleAuthCallback = async (code) => {
