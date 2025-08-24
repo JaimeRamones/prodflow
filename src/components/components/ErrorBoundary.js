@@ -1,44 +1,48 @@
-import React, { Component } from 'react';
+// Ruta: src/components/ErrorBoundary.js
 
-class ErrorBoundary extends Component {
+import React from 'react';
+
+class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, error: null, errorInfo: null };
   }
 
   static getDerivedStateFromError(error) {
-    // Update state so the next render will show the fallback UI.
+    // Actualiza el estado para que el siguiente renderizado muestre la UI de fallback.
     return { hasError: true };
   }
 
   componentDidCatch(error, errorInfo) {
-    // Log the error to the console
-    console.error("ProdFlow Error Boundary:", error, errorInfo);
+    // También puedes registrar el error en un servicio de reporte de errores
+    console.error("Error no detectado capturado por ErrorBoundary:", error, errorInfo);
     this.setState({ error: error, errorInfo: errorInfo });
   }
 
   render() {
     if (this.state.hasError) {
-      // Custom fallback UI
+      // Puedes renderizar cualquier UI de fallback que quieras
       return (
-        <div style={{ padding: '50px', textAlign: 'center', color: '#a94442', backgroundColor: '#f2dede', height: '100vh', fontFamily: 'sans-serif' }}>
-          <h1>¡Algo salió mal! (ProdFlow Fallback)</h1>
-          <p>Se ha producido un error crítico. Por favor, revisa la consola del navegador (F12).</p>
-          {this.state.error && this.state.errorInfo && (
-            <details style={{ whiteSpace: 'pre-wrap', textAlign: 'left', margin: '20px auto', maxWidth: '800px', border: '1px solid #a94442', padding: '15px', backgroundColor: '#fff' }}>
-              <summary>Detalles Técnicos (Copia esto)</summary>
-              <p><strong>Error:</strong> {this.state.error.toString()}</p>
-              <div><strong>Stack:</strong> {this.state.errorInfo.componentStack}</div>
+        <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white p-4">
+          <div className="bg-red-900/50 border border-red-700 rounded-lg p-6 max-w-lg text-center">
+            <h1 className="text-2xl font-bold mb-4">Algo salió muy mal.</h1>
+            <p className="mb-4">
+              La aplicación encontró un error inesperado. Por favor, refresca la página para intentarlo de nuevo.
+            </p>
+            <details className="text-left bg-gray-800 p-3 rounded-md text-sm text-gray-400">
+              <summary className="cursor-pointer">Detalles del error (para depuración)</summary>
+              <pre className="mt-2 whitespace-pre-wrap">
+                {this.state.error && this.state.error.toString()}
+                <br />
+                {this.state.errorInfo && this.state.errorInfo.componentStack}
+              </pre>
             </details>
-          )}
-          <button onClick={() => window.location.reload()} style={{ marginTop: '20px', padding: '10px 20px' }}>
-            Recargar
-          </button>
+          </div>
         </div>
       );
     }
 
-    return this.props.children;
+    return this.props.children; 
   }
 }
 

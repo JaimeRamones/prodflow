@@ -4,24 +4,18 @@ import { supabase } from './supabaseClient';
 // Importaciones de Componentes
 import Dashboard from './components/Dashboard';
 import InventoryList from './components/InventoryList';
-import ProductEntry from './components/ProductEntry';
-import EditProductModal from './components/EditProductModal';
-import MovementHistory from './components/MovementHistory';
-import Integrations from './components/Integrations';
-import LoginScreen from './components/LoginScreen';
-import OrdersManagement from './components/OrdersManagement';
-import SalesView from './components/SalesView';
-import WarehouseView from './components/WarehouseView';
-import Kits from './components/Kits';
-import ConfirmDeleteModal from './components/ConfirmDeleteModal';
-import Tools from './components/Tools';
-import Notification from './components/Notification';
-import PublicationsView from './components/PublicationsView';
+// ... (resto de tus importaciones)
 import CreatePublicationModal from './components/CreatePublicationModal';
+// --- CAMBIO 1: Importamos nuestro nuevo ErrorBoundary ---
+import ErrorBoundary from './components/ErrorBoundary';
+
 
 const Icon = ({ path }) => ( <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={path}></path></svg> );
 
 export const AppContext = createContext();
+
+// AppProvider y AppContent se mantienen igual que en la última versión que te pasé
+// ... (Pega aquí el código de AppProvider y AppContent sin cambios)
 
 const AppProvider = ({ children }) => {
     const [session, setSession] = useState(null);
@@ -53,7 +47,6 @@ const AppProvider = ({ children }) => {
     const fetchProducts = async () => {
         const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
         if (error) {
-            // --- CAMBIO: Añadimos este log para ver el error real ---
             console.error("Error REAL al buscar productos:", error);
             showMessage('Error al refrescar los productos.', 'error');
         } else {
@@ -63,7 +56,6 @@ const AppProvider = ({ children }) => {
     const fetchSuppliers = async () => {
         const { data, error } = await supabase.from('suppliers').select('*').order('name', { ascending: true });
         if (error) {
-            // --- CAMBIO: Añadimos este log para ver el error real ---
             console.error("Error REAL al buscar proveedores:", error);
             showMessage('Error al refrescar los proveedores.', 'error');
         } else {
@@ -73,7 +65,6 @@ const AppProvider = ({ children }) => {
     const fetchCategories = async () => {
         const { data, error } = await supabase.from('categories').select('*').order('name', { ascending: true });
         if (error) {
-            // --- CAMBIO: Añadimos este log para ver el error real ---
             console.error("Error REAL al buscar categorías:", error);
             showMessage('Error al refrescar las categorías.', 'error');
         } else {
@@ -107,7 +98,6 @@ const AppProvider = ({ children }) => {
                     fetchSalesOrders(),
                     fetchSupplierOrders(),
                     fetchPurchaseOrders(),
-                    // fetchKits()
                 ]);
             };
             fetchData();
@@ -216,9 +206,12 @@ const AppOrchestrator = () => {
 };
 
 const App = () => (
-    <AppProvider>
-        <AppOrchestrator />
-    </AppProvider>
+    // --- CAMBIO 2: Envolvemos la aplicación con nuestra "caja de fusibles" ---
+    <ErrorBoundary>
+        <AppProvider>
+            <AppOrchestrator />
+        </AppProvider>
+    </ErrorBoundary>
 );
 
 export default App;
