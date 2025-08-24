@@ -19,7 +19,6 @@ import Notification from './components/Notification';
 import PublicationsView from './components/PublicationsView';
 import CreatePublicationModal from './components/CreatePublicationModal';
 
-
 const Icon = ({ path }) => ( <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={path}></path></svg> );
 
 export const AppContext = createContext();
@@ -53,20 +52,34 @@ const AppProvider = ({ children }) => {
     
     const fetchProducts = async () => {
         const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
-        if (error) showMessage('Error al refrescar los productos.', 'error'); else setProducts(data);
+        if (error) {
+            // --- CAMBIO: Añadimos este log para ver el error real ---
+            console.error("Error REAL al buscar productos:", error);
+            showMessage('Error al refrescar los productos.', 'error');
+        } else {
+            setProducts(data);
+        }
     };
     const fetchSuppliers = async () => {
         const { data, error } = await supabase.from('suppliers').select('*').order('name', { ascending: true });
-        if (error) showMessage('Error al refrescar los proveedores.', 'error'); else setSuppliers(data);
+        if (error) {
+            // --- CAMBIO: Añadimos este log para ver el error real ---
+            console.error("Error REAL al buscar proveedores:", error);
+            showMessage('Error al refrescar los proveedores.', 'error');
+        } else {
+            setSuppliers(data);
+        }
     };
-    
-    // --- CAMBIO: Simplificamos la consulta para evitar el error si la tabla 'subcategories' no existe ---
     const fetchCategories = async () => {
         const { data, error } = await supabase.from('categories').select('*').order('name', { ascending: true });
-        // También corregimos el mensaje de error por si acaso lo tenías mal
-        if (error) showMessage('Error al refrescar las categorías.', 'error'); else setCategories(data);
+        if (error) {
+            // --- CAMBIO: Añadimos este log para ver el error real ---
+            console.error("Error REAL al buscar categorías:", error);
+            showMessage('Error al refrescar las categorías.', 'error');
+        } else {
+            setCategories(data);
+        }
     };
-
     const fetchSalesOrders = async () => {
         const { data, error } = await supabase.from('sales_orders').select(`*, order_items ( * )`).order('created_at', { ascending: false });
         if (error) { showMessage('Error al cargar pedidos de venta.', 'error'); } else { setSalesOrders(data); }
