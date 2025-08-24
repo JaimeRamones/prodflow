@@ -6,7 +6,9 @@ import reportWebVitals from './reportWebVitals';
 import { BrowserRouter } from 'react-router-dom';
 import { SessionContextProvider } from '@supabase/auth-helpers-react';
 import { supabase } from './supabaseClient'; // Importamos la instancia configurada (puede ser null)
-import ErrorBoundary from './components/ErrorBoundary'; // Importamos el ErrorBoundary
+
+// IMPORTANTE: Esta línea es la que causaba el error. Debe encontrar el archivo en la ruta correcta.
+import ErrorBoundary from './components/ErrorBoundary'; 
 
 console.log("[DIAGNÓSTICO] Iniciando index.js...");
 
