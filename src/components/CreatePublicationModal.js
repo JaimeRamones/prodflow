@@ -3,23 +3,33 @@ import { supabase } from '../supabaseClient';
 import { AppContext } from '../App';
 
 const CreatePublicationModal = ({ product, onClose }) => {
+    // --- CAMBIO CLAVE: Todos los hooks se declaran aquí arriba, antes de cualquier condición ---
     const { showMessage } = useContext(AppContext);
-    if (!product) return null;
-
     const [predictions, setPredictions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
     const [error, setError] = useState(null);
+    const [isValidated, setIsValidated] = useState(false);
 
-    const [title, setTitle] = useState(product.name || '');
-    const [price, setPrice] = useState(product.sale_price || '');
+    // Los estados del formulario ahora dependen del 'product' que llega, de forma segura
+    const [title, setTitle] = useState(product?.name || '');
+    const [price, setPrice] = useState(product?.sale_price || '');
     const [selectedCategoryId, setSelectedCategoryId] = useState('');
 
+    const resetValidation = () => setIsValidated(false);
+
     useEffect(() => {
+        // Si no hay título, no hacemos nada
+        if (!title) {
+            setIsLoading(false);
+            setPredictions([]);
+            return;
+        };
+
         const predictCategory = async () => {
-            if (!title) return;
             setIsLoading(true);
             setError(null);
+            resetValidation();
             try {
                 const { data: { session } } = await supabase.auth.getSession();
                 if (!session) throw new Error("User not authenticated");
@@ -43,30 +53,25 @@ const CreatePublicationModal = ({ product, onClose }) => {
         return () => clearTimeout(timer);
     }, [title]);
 
-    const handleValidate = async () => {
-        setIsProcessing(true);
-        
-        // --- CAMBIO CLAVE: Usamos los atributos del predictor ---
+    // --- CAMBIO CLAVE: La condición de salida ahora está DESPUÉS de los hooks ---
+    if (!product) return null;
+
+    const getListingData = () => {
         const selectedPrediction = predictions.find(p => p.category_id === selectedCategoryId);
         let attributesToSend = selectedPrediction ? selectedPrediction.attributes : [];
 
-        // Nos aseguramos de que la marca de nuestro producto esté presente y sea la correcta,
-        // ya que la predicción a veces puede fallar en la marca.
         const brandIndex = attributesToSend.findIndex(attr => attr.id === 'BRAND');
         if (brandIndex > -1) {
-            // Si el predictor encontró una marca, la sobrescribimos con la nuestra para mayor seguridad.
             attributesToSend[brandIndex].value_name = product.brand;
         } else {
-            // Si el predictor no encontró una marca, la añadimos nosotros.
             attributesToSend.push({ "id": "BRAND", "value_name": product.brand });
         }
         
-        // Añadimos el SKU como "Número de Pieza" (MPN) si no fue predicho
         if (!attributesToSend.some(attr => attr.id === 'MPN')) {
             attributesToSend.push({ "id": "MPN", "value_name": product.sku });
         }
         
-        const listingData = {
+        return {
             title: title,
             category_id: selectedCategoryId,
             price: parseFloat(price),
@@ -78,7 +83,11 @@ const CreatePublicationModal = ({ product, onClose }) => {
             pictures: [],
             attributes: attributesToSend,
         };
+    };
 
+    const handleValidate = async () => {
+        setIsProcessing(true);
+        const listingData = getListingData();
         try {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("User not authenticated");
@@ -91,17 +100,39 @@ const CreatePublicationModal = ({ product, onClose }) => {
             if (error) throw error;
 
             if (data.success) {
-                showMessage('¡Validación exitosa! El producto está listo para ser publicado.', 'success');
+                showMessage('¡Validación exitosa! Ya puedes publicar el producto.', 'success');
+                setIsValidated(true);
             } else {
-                throw new Error(data.error || 'Error desconocido durante la validación.');
+                throw new Error(data.error || 'Error desconocido.');
             }
         } catch(err) {
-             try {
-                const errorMessage = await err.context.json();
-                showMessage(errorMessage.error, 'error');
-            } catch {
-                showMessage(err.message, 'error');
+            showMessage(err.message.replace('Error de validación de Mercado Libre: ', ''), 'error');
+        }
+        setIsProcessing(false);
+    };
+
+    const handlePublish = async () => {
+        setIsProcessing(true);
+        const listingData = getListingData();
+         try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) throw new Error("User not authenticated");
+            
+            const { data, error } = await supabase.functions.invoke('mercadolibre-publish-listing', {
+                headers: { 'Authorization': `Bearer ${session.access_token}` },
+                body: listingData
+            });
+
+            if (error) throw error;
+
+            if (data.success) {
+                showMessage(`¡Producto publicado! ID: ${data.newListing.id}`, 'success');
+                onClose();
+            } else {
+                throw new Error(data.error || 'Error desconocido al publicar.');
             }
+        } catch(err) {
+            showMessage(err.message.replace('Error de Mercado Libre: ', ''), 'error');
         }
         setIsProcessing(false);
     };
@@ -117,11 +148,11 @@ const CreatePublicationModal = ({ product, onClose }) => {
                 <div className="space-y-4">
                     <div>
                         <label htmlFor="title" className="block text-sm font-medium text-gray-300 mb-1">Título de la Publicación</label>
-                        <input type="text" id="title" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-white"/>
+                        <input type="text" id="title" value={title} onChange={(e) => {setTitle(e.target.value); resetValidation();}} className="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-white"/>
                     </div>
                      <div>
                         <label htmlFor="price" className="block text-sm font-medium text-gray-300 mb-1">Precio</label>
-                        <input type="number" id="price" value={price} onChange={(e) => setPrice(e.target.value)} className="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-white"/>
+                        <input type="number" id="price" value={price} onChange={(e) => {setPrice(e.target.value); resetValidation();}} className="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-white"/>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-300 mb-1">Categoría (Sugerencias)</label>
@@ -131,7 +162,7 @@ const CreatePublicationModal = ({ product, onClose }) => {
                             <div className="space-y-2 max-h-32 overflow-y-auto">
                                 {predictions.length > 0 ? predictions.map(pred => (
                                     <label key={pred.category_id} className={`flex items-center p-3 rounded-md border-2 cursor-pointer ${selectedCategoryId === pred.category_id ? 'bg-blue-900/50 border-blue-500' : 'bg-gray-700 border-gray-600'}`}>
-                                        <input type="radio" name="category" value={pred.category_id} checked={selectedCategoryId === pred.category_id} onChange={(e) => setSelectedCategoryId(e.target.value)} className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-500"/>
+                                        <input type="radio" name="category" value={pred.category_id} checked={selectedCategoryId === pred.category_id} onChange={(e) => {setSelectedCategoryId(e.target.value); resetValidation();}} className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-500"/>
                                         <span className="ml-3 text-sm text-white">{pred.category_name}</span>
                                     </label>
                                 )) : <p className="text-gray-500 text-sm">No se encontraron sugerencias para este título.</p>}
@@ -144,11 +175,11 @@ const CreatePublicationModal = ({ product, onClose }) => {
                     <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-500">
                         Cancelar
                     </button>
-                    <button onClick={handleValidate} disabled={!selectedCategoryId || isProcessing} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed">
-                        {isProcessing ? 'Validando...' : 'Validar'}
+                    <button onClick={handleValidate} disabled={!selectedCategoryId || isProcessing || isValidated} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed">
+                        {isProcessing ? 'Validando...' : (isValidated ? '✓ Validado' : 'Validar')}
                     </button>
-                    <button disabled className="px-4 py-2 rounded-lg bg-green-800 text-gray-400 cursor-not-allowed">
-                        Publicar
+                    <button onClick={handlePublish} disabled={!isValidated || isProcessing} className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:text-gray-400 disabled:cursor-not-allowed">
+                        {isProcessing ? 'Publicando...' : 'Publicar'}
                     </button>
                 </div>
             </div>
