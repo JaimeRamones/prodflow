@@ -1,9 +1,8 @@
-// Ruta: src/components/Integrations.js
+// src/components/Integrations.js
 import React, { useState, useEffect, useContext, useCallback } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 
-// --- COMPONENTE "TONTO": Solo muestra los datos que le pasan ---
 const MeliListings = ({ listings, onSync, onSyncItem, isSyncing, syncingItemId }) => {
     const getLinkStatus = (listing) => {
         if (listing.product_id) return <span className="text-green-400 font-semibold">Vinculado</span>;
@@ -31,7 +30,7 @@ const MeliListings = ({ listings, onSync, onSyncItem, isSyncing, syncingItemId }
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-700">
-                        {listings.map(listing => (
+                        {listings && listings.map(listing => (
                             <tr key={listing.id}>
                                 <td className="px-4 py-3 font-medium text-white"><a href={listing.permalink} target="_blank" rel="noopener noreferrer" className="hover:underline">{listing.title}</a><div className="text-xs text-gray-500">{getLinkStatus(listing)}</div></td>
                                 <td className="px-4 py-3">{listing.sku || 'N/A'}</td>
@@ -47,14 +46,11 @@ const MeliListings = ({ listings, onSync, onSyncItem, isSyncing, syncingItemId }
     );
 };
 
-// --- COMPONENTE "CEREBRO": Maneja toda la lógica ---
 const Integrations = () => {
     const { showMessage, session, products } = useContext(AppContext);
     const [isConnected, setIsConnected] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
-
-    // Estados para la tabla
     const [listings, setListings] = useState([]);
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncingItemId, setSyncingItemId] = useState(null);
@@ -62,11 +58,9 @@ const Integrations = () => {
     const MELI_CLIENT_ID = process.env.REACT_APP_MELI_CLIENT_ID;
     const MELI_REDIRECT_URI = 'https://prodflow-jr.vercel.app';
 
-    // ** LÓGICA DE SINCRONIZACIÓN Y DATOS **
-
     const fetchLocalListings = useCallback(async () => {
         if (!session) return;
-        const { data, error } = await supabase.from('meli_listings').select('*');
+        const { data, error } = await supabase.from('mercadolibre_listings').select('*');
         if (error) {
             showMessage('Error al cargar publicaciones locales: ' + error.message, 'error');
         } else if (data) {
@@ -81,22 +75,15 @@ const Integrations = () => {
     const handleFullSync = useCallback(async () => {
         setIsSyncing(true);
         try {
-            // CORRECCIÓN #2: Dejamos que Supabase maneje la autenticación automáticamente.
-            // La librería cliente de Supabase ya sabe quién es el usuario y adjuntará el token necesario.
             const { error } = await supabase.functions.invoke('mercadolibre-sync-listings');
-            
             if (error) throw error;
-            
-            showMessage(`Sincronización completada.`, 'success');
-            await fetchLocalListings(); // Refresca la tabla con los nuevos datos
+            showMessage('Sincronización completada.', 'success');
+            await fetchLocalListings();
         } catch (err) {
-            // El mensaje de error ahora será más claro, por ejemplo "Edge function returned a non-2xx status code"
             showMessage(`Error al sincronizar: ${err.message}`, 'error');
         }
         setIsSyncing(false);
     }, [showMessage, fetchLocalListings]);
-
-    // ** LÓGICA DE EFECTOS Y CICLO DE VIDA **
 
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -105,12 +92,11 @@ const Integrations = () => {
         const handleAuthCallback = async (authCode) => {
             setIsProcessing(true);
             try {
-                const { data, error } = await supabase.functions.invoke('mercadolibre-auth-callback', { body: { code: authCode } });
-                if (error || !data.success) throw new Error(data?.error || error.message);
-
+                const { error } = await supabase.functions.invoke('mercadolibre-auth-callback', { body: { code: authCode } });
+                if (error) throw error;
                 showMessage('¡Conectado! Sincronizando publicaciones por primera vez...', 'success');
                 setIsConnected(true);
-                await handleFullSync(); // Sincroniza automáticamente solo la primera vez
+                await handleFullSync();
             } catch (err) {
                 showMessage(`Error al procesar la autorización: ${err.message}`, 'error');
             } finally {
@@ -124,10 +110,7 @@ const Integrations = () => {
             const { data } = await supabase.from('meli_credentials').select('id').limit(1).single();
             if (data) {
                 setIsConnected(true);
-                // Cuando el usuario ya está conectado, primero mostramos lo que hay en la base de datos local...
                 await fetchLocalListings();
-                // ...y luego iniciamos una sincronización para actualizar los datos.
-                handleFullSync();
             }
             setIsLoading(false);
         };
@@ -137,29 +120,31 @@ const Integrations = () => {
         } else {
             checkInitialConnection();
         }
-    // CORRECCIÓN #1: El array de dependencias vacío `[]` le dice a React:
-    // "Ejecuta esta lógica UNA SOLA VEZ cuando el componente aparece en pantalla, y no la vuelvas a ejecutar".
-    // Esto rompe el bucle infinito.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []); 
 
-    // ** MANEJADORES DE EVENTOS DE LA UI **
-
     const handleSyncItem = async (listing) => {
-        // ... (esta función se mantiene igual)
+        // Lógica para sincronizar un solo item si es necesario en el futuro
     };
 
     const handleConnect = () => {
-        if (!MELI_CLIENT_ID) return showMessage('Error: REACT_APP_MELI_CLIENT_ID no está configurado en Vercel.', 'error');
+        if (!MELI_CLIENT_ID) return showMessage('Error: REACT_APP_MELI_CLIENT_ID no está configurado.', 'error');
         const authUrl = `https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${MELI_CLIENT_ID}&redirect_uri=${MELI_REDIRECT_URI}`;
         window.location.href = authUrl;
     };
 
     const handleDisconnect = async () => {
-        // ... (esta función se mantiene igual)
+        if (!window.confirm('¿Estás seguro de que quieres desconectar tu cuenta de Mercado Libre?')) return;
+        try {
+            await supabase.from('meli_credentials').delete().eq('user_id', session.user.id);
+            await supabase.from('mercadolibre_listings').delete().eq('user_id', session.user.id);
+            showMessage('Cuenta de Mercado Libre desconectada.', 'success');
+            setIsConnected(false);
+            setListings([]);
+        } catch (err) {
+            showMessage(`Error al desconectar: ${err.message}`, 'error');
+        }
     };
-
-    // ** RENDERIZADO DEL COMPONENTE **
 
     if (isProcessing) {
         return <div className="text-center p-8"><p className="text-xl font-semibold text-white">Procesando autorización...</p></div>;
