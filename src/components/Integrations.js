@@ -1,9 +1,10 @@
-// src/components/Integrations.js
-import React, { useState, useEffect, useContext, useCallback } from 'react';
+// Ruta: src/components/Integrations.js
+import React, { useState, useEffect, useContext, useCallback, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 
-const MeliListings = ({ listings, onSync, onSyncItem, isSyncing, syncingItemId }) => {
+// --- COMPONENTE "TONTO": Solo muestra los datos que le pasan ---
+const MeliListings = ({ listings, onSyncItem, syncingItemId }) => {
     const getLinkStatus = (listing) => {
         if (listing.product_id) return <span className="text-green-400 font-semibold">Vinculado</span>;
         if (listing.sku) return <span className="text-yellow-400 font-semibold">SKU no encontrado</span>;
@@ -11,41 +12,52 @@ const MeliListings = ({ listings, onSync, onSyncItem, isSyncing, syncingItemId }
     };
 
     return (
-        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md mt-6">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-semibold text-white">Publicaciones Sincronizadas</h3>
-                <button onClick={onSync} disabled={isSyncing} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600">
-                    {isSyncing ? 'Sincronizando...' : 'Refrescar Publicaciones'}
-                </button>
-            </div>
-            <div className="relative overflow-x-auto shadow-md sm:rounded-lg">
-                <table className="w-full text-sm text-left text-gray-400">
-                    <thead className="text-xs text-gray-300 uppercase bg-gray-700">
-                        <tr>
-                            <th className="px-4 py-3">Publicación</th>
-                            <th className="px-4 py-3">SKU</th>
-                            <th className="px-4 py-3 text-center">Precio (ProdFlow / ML)</th>
-                            <th className="px-4 py-3 text-center">Stock (ProdFlow / ML)</th>
-                            <th className="px-4 py-3 text-center">Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-700">
-                        {listings && listings.map(listing => (
-                            <tr key={listing.id}>
-                                <td className="px-4 py-3 font-medium text-white"><a href={listing.permalink} target="_blank" rel="noopener noreferrer" className="hover:underline">{listing.title}</a><div className="text-xs text-gray-500">{getLinkStatus(listing)}</div></td>
+        <div className="relative overflow-x-auto shadow-md sm:rounded-lg mt-4">
+            <table className="w-full text-sm text-left text-gray-400">
+                <thead className="text-xs text-gray-300 uppercase bg-gray-700">
+                    <tr>
+                        <th className="px-4 py-3">ID de ML</th>
+                        <th className="px-4 py-3">Publicación</th>
+                        <th className="px-4 py-3">SKU</th>
+                        <th className="px-4 py-3 text-center">Vendidos</th>
+                        <th className="px-4 py-3 text-center">Stock (ProdFlow / ML)</th>
+                        <th className="px-4 py-3 text-center">Precio (ProdFlow / ML)</th>
+                        <th className="px-4 py-3 text-center">Acción</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                    {listings && listings.length > 0 ? (
+                        listings.map(listing => (
+                            <tr key={`${listing.meli_id}-${listing.meli_variation_id}`}>
+                                <td className="px-4 py-3 font-mono text-xs text-gray-500">{listing.meli_variation_id ? `${listing.meli_id}#${listing.meli_variation_id}` : listing.meli_id}</td>
+                                <td className="px-4 py-3 font-medium text-white">
+                                    <a href={listing.permalink} target="_blank" rel="noopener noreferrer" className="hover:underline">{listing.title}</a>
+                                    <div className="text-xs text-gray-500">{getLinkStatus(listing)}</div>
+                                </td>
                                 <td className="px-4 py-3">{listing.sku || 'N/A'}</td>
-                                <td className="px-4 py-3 text-center font-mono">${listing.prodflow_price ?? 'N/A'} / ${listing.price}</td>
+                                <td className="px-4 py-3 text-center font-mono">{listing.sold_quantity ?? 0}</td>
                                 <td className="px-4 py-3 text-center font-mono">{listing.prodflow_stock ?? 'N/A'} / {listing.available_quantity}</td>
-                                <td className="px-4 py-3 text-center"><button onClick={() => onSyncItem(listing)} disabled={!listing.product_id || syncingItemId === listing.id} className="px-3 py-1 bg-teal-600 text-white text-xs font-semibold rounded-md shadow-sm hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed">{syncingItemId === listing.id ? '...' : 'Sincronizar'}</button></td>
+                                <td className="px-4 py-3 text-center font-mono">${listing.prodflow_price ?? 'N/A'} / ${listing.price}</td>
+                                <td className="px-4 py-3 text-center">
+                                    <button onClick={() => onSyncItem(listing)} disabled={!listing.product_id || syncingItemId === listing.id} className="px-3 py-1 bg-teal-600 text-white text-xs font-semibold rounded-md shadow-sm hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
+                                        {syncingItemId === listing.id ? '...' : 'Sincronizar'}
+                                    </button>
+                                </td>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+                        ))
+                    ) : (
+                        <tr>
+                            <td colSpan="7" className="text-center py-8 text-gray-500">No se encontraron publicaciones.</td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
         </div>
     );
 };
 
+
+// --- COMPONENTE "CEREBRO": Maneja toda la lógica ---
 const Integrations = () => {
     const { showMessage, session, products } = useContext(AppContext);
     const [isConnected, setIsConnected] = useState(false);
@@ -54,13 +66,14 @@ const Integrations = () => {
     const [listings, setListings] = useState([]);
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncingItemId, setSyncingItemId] = useState(null);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const MELI_CLIENT_ID = process.env.REACT_APP_MELI_CLIENT_ID;
     const MELI_REDIRECT_URI = 'https://prodflow-jr.vercel.app';
 
     const fetchLocalListings = useCallback(async () => {
         if (!session) return;
-        const { data, error } = await supabase.from('mercadolibre_listings').select('*');
+        const { data, error } = await supabase.from('mercadolibre_listings').select('*').order('title', { ascending: true });
         if (error) {
             showMessage('Error al cargar publicaciones locales: ' + error.message, 'error');
         } else if (data) {
@@ -75,9 +88,9 @@ const Integrations = () => {
     const handleFullSync = useCallback(async () => {
         setIsSyncing(true);
         try {
-            const { error } = await supabase.functions.invoke('mercadolibre-sync-listings');
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-listings');
             if (error) throw error;
-            showMessage('Sincronización completada.', 'success');
+            showMessage(`Sincronización completada. Se procesaron ${data.count} publicaciones.`, 'success');
             await fetchLocalListings();
         } catch (err) {
             showMessage(`Error al sincronizar: ${err.message}`, 'error');
@@ -121,11 +134,21 @@ const Integrations = () => {
             checkInitialConnection();
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); 
+    }, []);
 
-    const handleSyncItem = async (listing) => {
-        // Lógica para sincronizar un solo item si es necesario en el futuro
-    };
+    const filteredListings = useMemo(() => {
+        if (!searchTerm.trim()) {
+            return listings;
+        }
+        const lowercasedTerm = searchTerm.toLowerCase();
+        return listings.filter(listing =>
+            listing.title.toLowerCase().includes(lowercasedTerm) ||
+            (listing.sku && listing.sku.toLowerCase().includes(lowercasedTerm)) ||
+            (listing.meli_id && listing.meli_id.toLowerCase().includes(lowercasedTerm))
+        );
+    }, [searchTerm, listings]);
+
+    const handleSyncItem = async (listing) => { /* Lógica futura */ };
 
     const handleConnect = () => {
         if (!MELI_CLIENT_ID) return showMessage('Error: REACT_APP_MELI_CLIENT_ID no está configurado.', 'error');
@@ -172,15 +195,31 @@ const Integrations = () => {
                                 )}
                         </div>
                     </div>
-                    {isConnected && !isLoading && 
-                        <MeliListings 
-                            listings={listings}
-                            onSync={handleFullSync}
-                            onSyncItem={handleSyncItem}
-                            isSyncing={isSyncing}
-                            syncingItemId={syncingItemId}
-                        />
-                    }
+                    {isConnected && !isLoading && (
+                        <div className="mt-6">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-xl font-semibold text-white">Publicaciones Sincronizadas</h3>
+                                <button onClick={handleFullSync} disabled={isSyncing} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600">
+                                    {isSyncing ? 'Sincronizando...' : 'Refrescar Publicaciones'}
+                                </button>
+                            </div>
+                            <div className="mb-4">
+                                <input
+                                    type="text"
+                                    placeholder="Buscar por ID, título o SKU..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <MeliListings 
+                                listings={filteredListings}
+                                onSyncItem={handleSyncItem}
+                                isSyncing={isSyncing}
+                                syncingItemId={syncingItemId}
+                            />
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

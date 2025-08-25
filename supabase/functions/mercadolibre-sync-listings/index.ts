@@ -5,16 +5,15 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import { corsHeaders } from '../_shared/cors.ts'
 
 async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseClient, userId: string) {
+  // ... (Esta función se mantiene igual, no necesita cambios)
   const MELI_CLIENT_ID = Deno.env.get('MELI_CLIENT_ID')!
   const MELI_CLIENT_SECRET = Deno.env.get('MELI_CLIENT_SECRET')!
   const response = await fetch('https://api.mercadolibre.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: MELI_CLIENT_ID,
-      client_secret: MELI_CLIENT_SECRET,
-      refresh_token: refreshToken,
+      grant_type: 'refresh_token', client_id: MELI_CLIENT_ID,
+      client_secret: MELI_CLIENT_SECRET, refresh_token: refreshToken,
     }),
   })
   if (!response.ok) {
@@ -82,7 +81,8 @@ serve(async (req) => {
 
     const CHUNK_SIZE = 20;
     const allListingsToUpsert = [];
-    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,status,listing_type_id,thumbnail';
+    // --- CAMBIO #1: Añadimos 'sold_quantity' a los datos que pedimos ---
+    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail';
 
     for (let i = 0; i < listingIds.length; i += CHUNK_SIZE) {
         const chunk = listingIds.slice(i, i + CHUNK_SIZE);
@@ -100,8 +100,9 @@ serve(async (req) => {
         
         for (const item of itemsChunk) {
             if (!item.body) continue;
+            // --- CAMBIO #2: Añadimos 'sold_quantity' a los datos que guardamos ---
+            // Nota: La lógica para variaciones y productos simples ya está aquí, solo añadimos el nuevo campo.
             const hasVariations = item.body.variations && item.body.variations.length > 0;
-
             if (hasVariations) {
                 for (const variation of item.body.variations) {
                     const sku = variation.seller_custom_field || variation.attributes?.find(attr => attr.id === 'GTIN')?.value_name;
@@ -110,8 +111,9 @@ serve(async (req) => {
                             user_id: user.id, meli_id: item.body.id, meli_variation_id: variation.id,
                             title: `${item.body.title} (${variation.attribute_combinations.map(attr => attr.value_name).join(' - ')})`,
                             sku: sku, price: variation.price || item.body.price, permalink: item.body.permalink,
-                            available_quantity: variation.available_quantity, last_synced_at: new Date().toISOString(),
-                            status: item.body.status, listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
+                            available_quantity: variation.available_quantity, sold_quantity: variation.sold_quantity, // Dato nuevo
+                            last_synced_at: new Date().toISOString(), status: item.body.status, 
+                            listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
                         });
                     }
                 }
@@ -122,6 +124,7 @@ serve(async (req) => {
                         user_id: user.id, meli_id: item.body.id, meli_variation_id: null,
                         title: item.body.title, sku: sku, price: item.body.price,
                         permalink: item.body.permalink, available_quantity: item.body.available_quantity,
+                        sold_quantity: item.body.sold_quantity, // Dato nuevo
                         last_synced_at: new Date().toISOString(), status: item.body.status,
                         listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
                     });

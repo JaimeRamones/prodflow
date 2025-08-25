@@ -3,9 +3,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getRefreshedToken } from '../_shared/meli_token.ts';
 
 serve(async (req) => {
-  // Manejo de la solicitud pre-vuelo (CORS)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -20,43 +20,36 @@ serve(async (req) => {
     const { data: { user } } = await supabaseClient.auth.getUser()
     if (!user) throw new Error('Usuario no encontrado')
 
-    // --- CAMBIO 1: Recibimos también el `new_price` desde el frontend ---
     const { meli_id, new_quantity, new_price } = await req.json()
-    if (!meli_id) {
-      throw new Error('Falta el parámetro meli_id en la solicitud')
-    }
+    if (!meli_id) throw new Error('Falta el parámetro meli_id')
 
-    const { data: mlTokens } = await supabaseClient
-      .from('mercadolibre_tokens')
-      .select('access_token')
+    // CORREGIDO: Apuntar a la tabla correcta 'meli_credentials' y obtener más datos
+    const { data: tokenData, error: tokenError } = await supabaseClient
+      .from('meli_credentials')
+      .select('access_token, refresh_token, expires_at')
       .eq('user_id', user.id)
       .single()
 
-    if (!mlTokens) throw new Error('No se encontraron tokens de Mercado Libre para el usuario.')
+    if (tokenError || !tokenData) throw new Error('No se encontraron tokens de Mercado Libre para el usuario.')
 
-    // --- CAMBIO 2: Construimos un cuerpo de solicitud dinámico ---
-    // De esta forma, solo enviamos los campos que queremos actualizar.
+    let accessToken = tokenData.access_token;
+    if (tokenData.expires_at && new Date(tokenData.expires_at) < new Date()) {
+        accessToken = await getRefreshedToken(tokenData.refresh_token, user.id, supabaseClient);
+    }
+    
     const payload: { available_quantity?: number, price?: number } = {};
+    if (new_quantity !== undefined) payload.available_quantity = new_quantity;
+    if (new_price !== undefined) payload.price = new_price;
 
-    if (new_quantity !== undefined && new_quantity !== null) {
-        payload.available_quantity = new_quantity;
-    }
-    if (new_price !== undefined && new_price !== null) {
-        payload.price = new_price;
-    }
-
-    // Si no se envió ni stock ni precio, devolvemos un error.
     if (Object.keys(payload).length === 0) {
         throw new Error('No se proporcionó ni cantidad ni precio para actualizar.');
     }
 
-    // Enviamos la solicitud a Mercado Libre con el cuerpo dinámico
     const updateResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
         method: 'PUT',
         headers: {
-            'Authorization': `Bearer ${mlTokens.access_token}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
         },
         body: JSON.stringify(payload)
     });
@@ -68,28 +61,25 @@ serve(async (req) => {
 
     const updatedListing = await updateResponse.json();
 
-    // --- CAMBIO 3: Actualizamos también el precio en nuestra base de datos ---
     await supabaseClient
         .from('mercadolibre_listings')
         .update({
             available_quantity: updatedListing.available_quantity,
-            price: updatedListing.price, // Guardamos el precio actualizado
+            price: updatedListing.price,
             last_synced_at: new Date().toISOString()
         })
         .eq('meli_id', meli_id);
 
-    // --- CAMBIO 4: Devolvemos tanto el stock como el precio actualizados al frontend ---
     return new Response(JSON.stringify({ 
         success: true, 
         updated_quantity: updatedListing.available_quantity,
         updated_price: updatedListing.price 
     }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
     })
 
   } catch (error) {
-    console.error('Error en la Edge Function:', error)
+    console.error('Error en la Edge Function (update-stock):', error.message)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
