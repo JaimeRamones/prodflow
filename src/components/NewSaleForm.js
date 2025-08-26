@@ -1,12 +1,4 @@
-// ... importaciones ...
-
-const NewSaleForm = () => {
-    console.log("--- NewSaleForm: Me estoy renderizando ---"); // <-- AÑADE ESTA LÍNEA
-    const { products, session, showMessage, kits, fetchProducts, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
-    // ... el resto de tu código ...
-
 // Ruta: src/components/NewSaleForm.js
-
 import React, { useState, useEffect, useRef, useContext, useCallback } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
