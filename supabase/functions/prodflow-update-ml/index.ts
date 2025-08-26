@@ -25,15 +25,12 @@ Deno.serve(async (req) => {
 
     const stockChanged = updatedProduct.stock_disponible !== oldProduct.stock_disponible
     const priceChanged = updatedProduct.sale_price !== oldProduct.sale_price
-    // --- ¡NUEVO CAMBIO AQUÍ! ---
     const skuChanged = updatedProduct.sku !== oldProduct.sku
 
-    // Si no cambió nada de lo que nos importa, terminamos.
     if (!stockChanged && !priceChanged && !skuChanged) {
       return new Response(JSON.stringify({ message: 'No relevant change detected.' }))
     }
 
-    // Usamos el SKU viejo para encontrar la publicación, por si acaso el SKU es lo que cambió.
     const skuToFind = oldProduct.sku
     
     const { data: listings, error: listingError } = await supabaseAdmin
@@ -62,23 +59,15 @@ Deno.serve(async (req) => {
         accessToken = await getRefreshedToken(tokenData.refresh_token, updatedProduct.user_id, supabaseAdmin);
     }
 
-    // --- ¡NUEVO CAMBIO AQUÍ! ---
-    // Preparamos los datos a enviar a Mercado Libre
     const updatePayload: { available_quantity?: number; price?: number; seller_custom_field?: string; } = {};
     if (stockChanged) updatePayload.available_quantity = updatedProduct.stock_disponible;
     if (priceChanged) updatePayload.price = updatedProduct.sale_price;
-    // Si el SKU cambió, se lo enviamos a ML como 'seller_custom_field'
     if (skuChanged) updatePayload.seller_custom_field = updatedProduct.sku;
 
     for (const listing of listings) {
-      console.log(`Updating ML listing ${listing.meli_id} with payload:`, updatePayload);
-      
       const response = await fetch(`https://api.mercadolibre.com/items/${listing.meli_id}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(updatePayload),
       })
 
@@ -86,10 +75,25 @@ Deno.serve(async (req) => {
         const errorBody = await response.json()
         console.error(`Failed to update listing ${listing.meli_id}: ${errorBody.message}`);
       } else {
-        console.log(`Successfully updated listing ${listing.meli_id}.`);
-        // Si el SKU cambió, también lo actualizamos en nuestra tabla de listings
-        if (skuChanged) {
-            await supabaseAdmin.from('mercadolibre_listings').update({ sku: updatedProduct.sku }).eq('meli_id', listing.meli_id);
+        console.log(`Successfully updated listing ${listing.meli_id} on Mercado Libre.`);
+        
+        // --- ¡LA CORRECCIÓN FINAL ESTÁ AQUÍ! ---
+        // Preparamos los datos para actualizar nuestra tabla local
+        const localUpdateData: { sku?: string; price?: number; available_quantity?: number; } = {};
+        if (skuChanged) localUpdateData.sku = updatedProduct.sku;
+        if (priceChanged) localUpdateData.price = updatedProduct.sale_price;
+        if (stockChanged) localUpdateData.available_quantity = updatedProduct.stock_disponible;
+
+        // Actualizamos la fila en nuestra tabla 'mercadolibre_listings'
+        const { error: localUpdateError } = await supabaseAdmin
+            .from('mercadolibre_listings')
+            .update(localUpdateData)
+            .eq('meli_id', listing.meli_id);
+        
+        if (localUpdateError) {
+            console.error(`Failed to update local listing ${listing.meli_id}: ${localUpdateError.message}`);
+        } else {
+            console.log(`Successfully updated local listing ${listing.meli_id}.`);
         }
       }
     }
