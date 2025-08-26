@@ -1,8 +1,9 @@
+// Ruta: src/components/EditProductModal.js
+
 import React, { useState, useEffect, useContext } from 'react';
 import { AppContext } from '../App';
-import { masterData } from '../masterData'; // Usamos el archivo central que creamos
+import { masterData } from '../masterData';
 
-// Componente FormSelect (sin cambios)
 const FormSelect = ({ label, name, value, onChange, options, placeholder, valueKey = 'id', labelKey = 'name' }) => (
     <div>
         <label htmlFor={`edit-${name}`} className="block mb-2 text-sm font-medium text-white">{label}</label>
@@ -18,7 +19,6 @@ const FormSelect = ({ label, name, value, onChange, options, placeholder, valueK
 );
 
 const EditProductModal = ({ product, onClose, onSave }) => {
-    // Ya no necesitamos 'categories' del contexto, usaremos masterData para ser consistentes
     const { suppliers } = useContext(AppContext);
     const [editedProduct, setEditedProduct] = useState(product);
     
@@ -45,8 +45,17 @@ const EditProductModal = ({ product, onClose, onSave }) => {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        const isNumeric = name === 'supplier_id';
-        const finalValue = isNumeric && value ? parseInt(value, 10) : value;
+        // --- CAMBIO 1: Añadimos 'stock_disponible' a la lista de campos numéricos ---
+        const isNumeric = name === 'supplier_id' || name === 'stock_disponible';
+        // Usamos parseFloat para costo, e Int para el resto de numéricos
+        let finalValue;
+        if (name === 'cost_price') {
+            finalValue = value; // Se mantiene como string para el input, el useEffect lo maneja
+        } else if (isNumeric) {
+            finalValue = value ? parseInt(value, 10) : null;
+        } else {
+            finalValue = value;
+        }
 
         const newProductState = { ...editedProduct, [name]: finalValue };
 
@@ -63,7 +72,6 @@ const EditProductModal = ({ product, onClose, onSave }) => {
 
     if (!product) return null;
     
-    // --- CAMBIO CLAVE: Usamos masterData para Rubros y Subrubros, igual que en ProductEntry ---
     const rubroOptions = Object.keys(masterData.categories);
     const subrubroOptions = editedProduct.rubro && masterData.categories[editedProduct.rubro]
         ? masterData.categories[editedProduct.rubro]
@@ -79,7 +87,6 @@ const EditProductModal = ({ product, onClose, onSave }) => {
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             <FormSelect label="Proveedor" name="supplier_id" value={editedProduct.supplier_id || ''} onChange={handleChange} options={suppliers} placeholder="Seleccionar Proveedor" />
                             <FormSelect label="Marca" name="brand" value={editedProduct.brand || ''} onChange={handleChange} options={masterData.brands} placeholder="Seleccionar Marca" />
-                            {/* Ahora este usará la lista de masterData */}
                             <FormSelect label="Rubro" name="rubro" value={editedProduct.rubro || ''} onChange={handleChange} options={rubroOptions} placeholder="Seleccionar Rubro" />
                             <FormSelect label="Subrubro" name="subrubro" value={editedProduct.subrubro || ''} onChange={handleChange} options={subrubroOptions} placeholder="Seleccionar Subrubro" />
                         </div>
@@ -91,7 +98,8 @@ const EditProductModal = ({ product, onClose, onSave }) => {
                              </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* --- CAMBIO 2: Nueva sección para Costo, Precio y STOCK --- */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block mb-2 text-sm font-medium text-white">Costo</label>
                                 <input type="number" step="0.01" name="cost_price" value={editedProduct.cost_price || ''} onChange={handleChange} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" required />
@@ -99,6 +107,11 @@ const EditProductModal = ({ product, onClose, onSave }) => {
                             <div>
                                 <label className="block mb-2 text-sm font-medium text-white">Precio de Venta (Automático)</label>
                                 <input type="number" step="0.01" name="sale_price" value={editedProduct.sale_price || ''} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-900/50 border-gray-600 cursor-not-allowed" readOnly />
+                            </div>
+                            {/* --- ESTE ES EL NUEVO CAMPO PARA EL STOCK --- */}
+                            <div>
+                                <label className="block mb-2 text-sm font-medium text-white">Stock Disponible</label>
+                                <input type="number" name="stock_disponible" value={editedProduct.stock_disponible || ''} onChange={handleChange} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" />
                             </div>
                         </div>
                         
