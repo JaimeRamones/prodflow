@@ -3,14 +3,16 @@
 import React, { useState, useEffect, useContext, createContext, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
-// Importaciones de tus componentes
+// Importaciones de Componentes (verificadas y completas)
 import Dashboard from './components/Dashboard';
 import InventoryList from './components/InventoryList';
 import ProductEntry from './components/ProductEntry';
 import SalesView from './components/SalesView';
 import OrdersManagement from './components/OrdersManagement';
+import WarehouseView from './components/WarehouseView';
 import Kits from './components/Kits';
 import MovementHistory from './components/MovementHistory';
+import Tools from './components/Tools';
 import Integrations from './components/Integrations';
 import PublicationsView from './components/PublicationsView';
 import LoginScreen from './components/LoginScreen';
@@ -18,10 +20,6 @@ import Notification from './components/Notification';
 import EditProductModal from './components/EditProductModal';
 import ConfirmDeleteModal from './components/ConfirmDeleteModal';
 import CreatePublicationModal from './components/CreatePublicationModal';
-// Añadimos las importaciones que se borraron
-import Tools from './components/Tools';
-import WarehouseView from './components/WarehouseView';
-
 
 // Icono genérico para la barra lateral
 const Icon = ({ path }) => (
@@ -49,7 +47,6 @@ const AppProvider = ({ children }) => {
         setNotification({ show: true, message, type });
     };
 
-    // Manejo de la sesión de Supabase
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
@@ -135,7 +132,7 @@ const AppProvider = ({ children }) => {
 };
 
 
-// Componente principal de la interfaz (barra lateral y contenido)
+// Componente principal de la interfaz (barra lateral y contenido) - RESTAURADO A TU VERSIÓN ORIGINAL
 const AppContent = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [productToEdit, setProductToEdit] = useState(null);
@@ -146,7 +143,6 @@ const AppContent = () => {
 
     const { showMessage, notification, setNotification, fetchProducts } = useContext(AppContext);
 
-    // Manejadores de acciones
     const handleEdit = (product) => { setProductToEdit(product); setIsEditModalOpen(true); };
     const handlePublish = (product) => { setProductToPublish(product); setIsPublishModalOpen(true); };
 
@@ -158,7 +154,7 @@ const AppContent = () => {
             if (error) throw error;
             showMessage("Producto actualizado con éxito.", "success");
             setIsEditModalOpen(false);
-            await fetchProducts(); 
+            await fetchProducts();
         } catch (error) { showMessage(`Error al guardar cambios: ${error.message}`, 'error'); }
     };
 
@@ -178,7 +174,6 @@ const AppContent = () => {
         if (error) { showMessage("Error al cerrar sesión: " + error.message, 'error'); }
     };
 
-    // Renderizado condicional de las pestañas (RESTAURADO A TU VERSIÓN ORIGINAL)
     const renderActiveTab = () => {
         switch (activeTab) {
             case 'dashboard': return <Dashboard />;
@@ -196,7 +191,6 @@ const AppContent = () => {
         }
     };
 
-    // Componente reutilizable para los botones de navegación
     const NavButton = ({ tabName, iconPath, children }) => (
         <li>
             <button
@@ -263,7 +257,6 @@ const AppContent = () => {
     );
 };
 
-// Orquestador: Decide si mostrar Login, Carga o la App
 const AppOrchestrator = () => {
     const { session, loading } = useContext(AppContext);
 
@@ -278,7 +271,6 @@ const AppOrchestrator = () => {
     return session ? <AppContent /> : <LoginScreen />;
 };
 
-// Punto de entrada de la App
 const App = () => (
     <AppProvider>
         <AppOrchestrator />
