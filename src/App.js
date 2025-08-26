@@ -116,7 +116,7 @@ const AppProvider = ({ children }) => {
                 fetchSalesOrders(),
                 fetchSupplierOrders(),
                 fetchPurchaseOrders(),
-                fetchKits()
+                //fetchKits()
             ]);
         }
     }, [session, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchKits]);
