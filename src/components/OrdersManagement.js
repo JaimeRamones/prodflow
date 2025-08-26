@@ -1,10 +1,3 @@
-// ... importaciones ...
-
-const OrdersManagement = () => {
-    console.log("--- OrdersManagement: Me estoy renderizando ---"); // <-- AÑADE ESTA LÍNEA
-    const { products, salesOrders } = useContext(AppContext);
-    // ... el resto de tu código ...
-
 import React, { useState, useContext, useEffect } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
