@@ -1,9 +1,32 @@
-// supabase/functions/mercadolibre-update-stock/index.ts
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
+import { corsHeaders } from '../_shared/cors.ts'
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-import { corsHeaders } from '../_shared/cors.ts';
-import { getRefreshedToken } from '../_shared/meli_token.ts';
+// Esta función auxiliar se puede mover a _shared/meli_token.ts si la usas en otras funciones
+async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseClient, userId: string) {
+  const MELI_CLIENT_ID = Deno.env.get('MELI_CLIENT_ID')!
+  const MELI_CLIENT_SECRET = Deno.env.get('MELI_CLIENT_SECRET')!
+  const response = await fetch('https://api.mercadolibre.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token', client_id: MELI_CLIENT_ID,
+      client_secret: MELI_CLIENT_SECRET, refresh_token: refreshToken,
+    }),
+  })
+  if (!response.ok) {
+    const errorBody = await response.json();
+    throw new Error(`Failed to refresh ML token: ${errorBody.message}`);
+  }
+  const newTokens = await response.json()
+  const expires_at = new Date(Date.now() + newTokens.expires_in * 1000).toISOString()
+  await supabaseAdmin.from('meli_credentials').update({
+    access_token: newTokens.access_token,
+    refresh_token: newTokens.refresh_token,
+    expires_at: expires_at,
+  }).eq('user_id', userId)
+  return newTokens.access_token
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -16,70 +39,76 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
     )
-
+    
     const { data: { user } } = await supabaseClient.auth.getUser()
-    if (!user) throw new Error('Usuario no encontrado')
+    if (!user) throw new Error('User not found')
 
-    const { meli_id, new_quantity, new_price } = await req.json()
-    if (!meli_id) throw new Error('Falta el parámetro meli_id')
+    // Recibimos el objeto 'listing' completo desde el frontend
+    const { listing } = await req.json();
+    if (!listing || !listing.meli_id) throw new Error("Listing data with meli_id is required.");
 
-    // CORREGIDO: Apuntar a la tabla correcta 'meli_credentials' y obtener más datos
-    const { data: tokenData, error: tokenError } = await supabaseClient
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+
+    let { data: mlTokens, error: tokenError } = await supabaseAdmin
       .from('meli_credentials')
       .select('access_token, refresh_token, expires_at')
       .eq('user_id', user.id)
       .single()
 
-    if (tokenError || !tokenData) throw new Error('No se encontraron tokens de Mercado Libre para el usuario.')
-
-    let accessToken = tokenData.access_token;
-    if (tokenData.expires_at && new Date(tokenData.expires_at) < new Date()) {
-        accessToken = await getRefreshedToken(tokenData.refresh_token, user.id, supabaseClient);
-    }
+    if (tokenError || !mlTokens) throw new Error('Mercado Libre token not found.');
     
-    const payload: { available_quantity?: number, price?: number } = {};
-    if (new_quantity !== undefined) payload.available_quantity = new_quantity;
-    if (new_price !== undefined) payload.price = new_price;
-
-    if (Object.keys(payload).length === 0) {
-        throw new Error('No se proporcionó ni cantidad ni precio para actualizar.');
+    if (mlTokens.expires_at && new Date(mlTokens.expires_at) < new Date()) {
+      mlTokens.access_token = await getRefreshedToken(mlTokens.refresh_token, supabaseAdmin, user.id)
     }
 
-    const updateResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
+    let url: string;
+    let body: string;
+
+    // --- LÓGICA CLAVE: Diferenciar entre variación y producto simple ---
+    if (listing.meli_variation_id) {
+      // Es una variación, el endpoint y el body son diferentes
+      url = `https://api.mercadolibre.com/items/${listing.meli_id}/variations`;
+      body = JSON.stringify([{
+        id: listing.meli_variation_id,
+        price: listing.prodflow_price,
+        available_quantity: listing.prodflow_stock,
+      }]);
+    } else {
+      // Es un producto simple
+      url = `https://api.mercadolibre.com/items/${listing.meli_id}`;
+      body = JSON.stringify({
+        price: listing.prodflow_price,
+        available_quantity: listing.prodflow_stock,
+      });
+    }
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${mlTokens.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: body,
     });
 
-    if (!updateResponse.ok) {
-        const errorBody = await updateResponse.json();
-        throw new Error(`Error de la API de Mercado Libre: ${errorBody.message}`);
+    if (!response.ok) {
+      const errorBody = await response.json();
+      throw new Error(`ML API Error: ${errorBody.message || 'Unknown error'}`);
     }
 
-    const updatedListing = await updateResponse.json();
+    const result = await response.json();
 
-    await supabaseClient
-        .from('mercadolibre_listings')
-        .update({
-            available_quantity: updatedListing.available_quantity,
-            price: updatedListing.price,
-            last_synced_at: new Date().toISOString()
-        })
-        .eq('meli_id', meli_id);
-
-    return new Response(JSON.stringify({ 
-        success: true, 
-        updated_quantity: updatedListing.available_quantity,
-        updated_price: updatedListing.price 
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
     })
 
   } catch (error) {
-    console.error('Error en la Edge Function (update-stock):', error.message)
+    console.error('Error in update function:', error.message)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
