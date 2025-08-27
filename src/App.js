@@ -21,7 +21,6 @@ import Notification from './components/Notification';
 import EditProductModal from './components/EditProductModal';
 import ConfirmDeleteModal from './components/ConfirmDeleteModal';
 import CreatePublicationModal from './components/CreatePublicationModal';
-// Importamos el componente de la Landing Page
 import LandingPage from './components/LandingPage';
 
 const Icon = ({ path }) => (
@@ -32,6 +31,7 @@ const Icon = ({ path }) => (
 
 export const AppContext = createContext();
 
+// AppProvider se mantiene igual, no necesita cambios.
 const AppProvider = ({ children }) => {
     const [session, setSession] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -129,8 +129,15 @@ const AppProvider = ({ children }) => {
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+
+// --- AQUI COMIENZAN LOS CAMBIOS PARA HACER LA APP RESPONSIVE ---
 const AppContent = () => {
+    // Estado para controlar qué vista se muestra (dashboard, inventario, etc.)
     const [activeTab, setActiveTab] = useState('dashboard');
+    // Estado para controlar la visibilidad del menú en móviles
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+    // El resto de tus estados se mantienen igual
     const [productToEdit, setProductToEdit] = useState(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [productToDelete, setProductToDelete] = useState(null);
@@ -187,10 +194,14 @@ const AppContent = () => {
         }
     };
 
+    // Componente para los botones del menú. Al hacer clic, cierra el menú en móvil.
     const NavButton = ({ tabName, iconPath, children }) => (
         <li>
             <button
-                onClick={() => setActiveTab(tabName)}
+                onClick={() => {
+                    setActiveTab(tabName);
+                    setIsSidebarOpen(false); // Cierra el menú al seleccionar una opción
+                }}
                 className={`flex items-center w-full p-2 text-base font-normal rounded-lg transition duration-75 group ${
                     activeTab === tabName ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
                 }`}
@@ -211,9 +222,20 @@ const AppContent = () => {
                 />
             )}
 
-            <aside className="fixed top-0 left-0 z-40 w-64 h-screen transition-transform bg-gray-800 border-r border-gray-700 sm:translate-x-0">
-                <div className="h-full px-3 py-4 overflow-y-auto bg-gray-800">
-                    <div className="flex items-center pl-2.5 mb-5">
+            {/* --- BARRA DE NAVEGACIÓN SUPERIOR PARA MÓVILES --- */}
+            <nav className="sm:hidden fixed top-0 left-0 right-0 bg-gray-800 border-b border-gray-700 z-30 h-14 flex items-center px-4">
+                <button onClick={() => setIsSidebarOpen(true)} className="text-gray-400 hover:text-white">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+                <span className="text-xl font-semibold text-white ml-4">ProdFlow</span>
+            </nav>
+
+            {/* --- MENÚ LATERAL (SIDEBAR) --- */}
+            {/* Se añaden clases para controlar su posición y visibilidad en diferentes tamaños de pantalla */}
+            <aside className={`fixed top-0 left-0 z-40 w-64 h-screen bg-gray-800 border-r border-gray-700 transition-transform 
+                ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} sm:translate-x-0`}>
+                <div className="h-full px-3 py-4 overflow-y-auto">
+                    <div className="flex items-center pl-2.5 mb-5 h-14">
                         <span className="self-center text-xl font-semibold whitespace-nowrap text-white ml-3">ProdFlow</span>
                     </div>
                     <ul className="space-y-2">
@@ -239,11 +261,11 @@ const AppContent = () => {
                     </ul>
                 </div>
             </aside>
-
-            <main className="p-4 sm:ml-64">
-                <div className="mt-14"> 
-                    {renderActiveTab()}
-                </div>
+            
+            {/* --- CONTENIDO PRINCIPAL --- */}
+            {/* Se añade un margen a la izquierda en pantallas grandes (sm:ml-64) y un margen superior en móviles (mt-14) */}
+            <main className="p-4 sm:ml-64 mt-14 sm:mt-0">
+                {renderActiveTab()}
             </main>
 
             {isEditModalOpen && <EditProductModal product={productToEdit} onClose={() => setIsEditModalOpen(false)} onSave={handleSave} />}
@@ -267,6 +289,7 @@ const AppOrchestrator = () => {
     return session ? <AppContent /> : <LoginScreen />;
 };
 
+// El Router principal se mantiene igual
 const App = () => (
     <BrowserRouter>
         <Routes>
