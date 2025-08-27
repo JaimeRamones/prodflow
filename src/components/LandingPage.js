@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 // CORRECCIÓN: Se cambió la extensión a .png
-import prodflowLogo from '../assets/prodflow-logo.png'; 
+import prodflowLogo from '../assets/logo.png'; 
 
 const LandingPage = () => {
     // Estilos en línea para evitar la necesidad de un archivo CSS separado por ahora
