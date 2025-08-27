@@ -3,7 +3,7 @@ import React, { useState, useEffect, useContext, useCallback, useMemo } from 're
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 
-// --- COMPONENTE "TONTO": Solo muestra los datos que le pasan ---
+// --- COMPONENTE PARA MOSTRAR LAS PUBLICACIONES (Sin cambios) ---
 const MeliListings = ({ listings, onSyncItem, syncingItemId }) => {
     const getLinkStatus = (listing) => {
         if (listing.product_id) return <span className="text-green-400 font-semibold">Vinculado</span>;
@@ -28,7 +28,7 @@ const MeliListings = ({ listings, onSyncItem, syncingItemId }) => {
                 <tbody className="divide-y divide-gray-700">
                     {listings && listings.length > 0 ? (
                         listings.map(listing => (
-                            <tr key={`${listing.meli_id}-${listing.meli_variation_id}`}>
+                            <tr key={`${listing.meli_id}-${listing.meli_variation_id || ''}`}>
                                 <td className="px-4 py-3 font-mono text-xs text-gray-500">{listing.meli_variation_id ? `${listing.meli_id}#${listing.meli_variation_id}` : listing.meli_id}</td>
                                 <td className="px-4 py-3 font-medium text-white">
                                     <a href={listing.permalink} target="_blank" rel="noopener noreferrer" className="hover:underline">{listing.title}</a>
@@ -57,7 +57,7 @@ const MeliListings = ({ listings, onSyncItem, syncingItemId }) => {
 };
 
 
-// --- COMPONENTE "CEREBRO": Maneja toda la lógica ---
+// --- COMPONENTE PRINCIPAL CON LÓGICA ACTUALIZADA ---
 const Integrations = () => {
     const { showMessage, session, products } = useContext(AppContext);
     const [isConnected, setIsConnected] = useState(false);
@@ -67,9 +67,7 @@ const Integrations = () => {
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncingItemId, setSyncingItemId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
-
-    const MELI_CLIENT_ID = process.env.REACT_APP_MELI_CLIENT_ID;
-    const MELI_REDIRECT_URI = 'https://prodflow-jr.vercel.app';
+    const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
     const fetchLocalListings = useCallback(async () => {
         if (!session) return;
@@ -84,7 +82,7 @@ const Integrations = () => {
             setListings(linkedListings);
         }
     }, [session, products, showMessage]);
-
+    
     const handleFullSync = useCallback(async () => {
         setIsSyncing(true);
         try {
@@ -151,13 +149,18 @@ const Integrations = () => {
     const handleSyncItem = async (listing) => { /* Lógica futura */ };
 
     const handleConnect = () => {
-        if (!MELI_CLIENT_ID) return showMessage('Error: REACT_APP_MELI_CLIENT_ID no está configurado.', 'error');
-        const authUrl = `https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${MELI_CLIENT_ID}&redirect_uri=${MELI_REDIRECT_URI}`;
+        const clientId = process.env.REACT_APP_MELI_CLIENT_ID;
+        if (!clientId) return showMessage('Error: REACT_APP_MELI_CLIENT_ID no está configurado.', 'error');
+        
+        // **AQUÍ ESTÁ LA CORRECCIÓN**
+        const redirectUri = window.location.origin + '/app';
+        
+        const authUrl = `https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}`;
         window.location.href = authUrl;
     };
 
     const handleDisconnect = async () => {
-        if (!window.confirm('¿Estás seguro de que quieres desconectar tu cuenta de Mercado Libre?')) return;
+        setIsProcessing(true);
         try {
             await supabase.from('meli_credentials').delete().eq('user_id', session.user.id);
             await supabase.from('mercadolibre_listings').delete().eq('user_id', session.user.id);
@@ -166,6 +169,9 @@ const Integrations = () => {
             setListings([]);
         } catch (err) {
             showMessage(`Error al desconectar: ${err.message}`, 'error');
+        } finally {
+            setConfirmingDisconnect(false);
+            setIsProcessing(false);
         }
     };
 
@@ -178,25 +184,41 @@ const Integrations = () => {
             <div className="flex justify-between items-center mb-6"><h2 className="text-3xl font-bold text-white">Integraciones</h2></div>
             <div className="space-y-6">
                 <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h3 className="text-xl font-semibold text-white">Mercado Libre</h3>
-                            <p className="text-gray-400 mt-1">Sincroniza tu inventario y gestiona tus pedidos.</p>
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                            <img src="https://http2.mlstatic.com/frontend-assets/ml-web-navigation/ui-navigation/5.21.1/mercadolibre/logo__large_plus.png" alt="Mercado Libre" className="h-8 bg-white p-1 rounded"/>
+                            <div>
+                                <h3 className="text-xl font-semibold text-white">Mercado Libre</h3>
+                                <p className="text-gray-400 mt-1">{isConnected ? 'Tu cuenta está conectada.' : 'Sincroniza tu inventario y gestiona tus pedidos.'}</p>
+                            </div>
                         </div>
-                        <div className="flex items-center">
+                        <div className="w-full sm:w-auto">
                             {isLoading ? <p className="text-gray-400">Verificando...</p> :
                                 isConnected ? (
-                                    <div className="flex items-center gap-4">
-                                        <span className="flex items-center text-green-400 bg-green-900/50 px-3 py-1 rounded-full text-sm font-semibold">Conectado</span>
-                                        <button onClick={handleDisconnect} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Desconectar</button>
-                                    </div>
+                                    confirmingDisconnect ? (
+                                        <div className="flex items-center justify-end space-x-2">
+                                            <span className="text-sm text-yellow-400">¿Seguro?</span>
+                                            <button onClick={handleDisconnect} disabled={isProcessing} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 rounded-lg transition-colors disabled:opacity-50">
+                                                {isProcessing ? '...' : 'Sí, Desconectar'}
+                                            </button>
+                                            <button onClick={() => setConfirmingDisconnect(false)} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded-lg transition-colors">
+                                                No
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={() => setConfirmingDisconnect(true)} className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg shadow-md hover:bg-gray-700 w-full">
+                                            Desconectar
+                                        </button>
+                                    )
                                 ) : (
-                                    <button onClick={handleConnect} className="px-4 py-2 bg-yellow-500 text-gray-900 font-semibold rounded-lg shadow-md hover:bg-yellow-600">Conectar</button>
+                                    <button onClick={handleConnect} className="px-4 py-2 bg-yellow-500 text-gray-900 font-semibold rounded-lg shadow-md hover:bg-yellow-600 w-full">
+                                        Conectar
+                                    </button>
                                 )}
                         </div>
                     </div>
                     {isConnected && !isLoading && (
-                        <div className="mt-6">
+                        <div className="mt-6 pt-6 border-t border-gray-700">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-xl font-semibold text-white">Publicaciones Sincronizadas</h3>
                                 <button onClick={handleFullSync} disabled={isSyncing} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600">
@@ -215,7 +237,6 @@ const Integrations = () => {
                             <MeliListings 
                                 listings={filteredListings}
                                 onSyncItem={handleSyncItem}
-                                isSyncing={isSyncing}
                                 syncingItemId={syncingItemId}
                             />
                         </div>
