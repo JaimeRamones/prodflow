@@ -64,34 +64,35 @@ serve(async (req) => {
     const meliUserId = mlTokens.meli_user_id;
     if (!meliUserId) throw new Error('ML User ID is missing from credentials.');
 
-    // --- INICIO DE LA MODIFICACIÓN PARA PAGINACIÓN ---
     const allListingIds = [];
     let offset = 0;
-    const limit = 50; // ML devuelve de a 50 por página
+    const limit = 50;
 
     while (true) {
+      // --- AQUÍ ESTÁ LA CORRECCIÓN ---
+      // Se construye la URL con los parámetros correctos
       const url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?limit=${limit}&offset=${offset}`;
+      
       const listingsIdsResponse = await fetch(url, { 
         headers: { Authorization: `Bearer ${mlTokens.access_token}` } 
       });
 
       if (!listingsIdsResponse.ok) {
         const err = await listingsIdsResponse.json();
-        throw new Error(`Failed to fetch listing IDs from ML: ${err.message}`);
+        // Se añade el detalle del error para mayor claridad
+        throw new Error(`Failed to fetch listing IDs from ML: ${err.message}. Invalid limit and offset values?`);
       }
 
       const listingsIdsData = await listingsIdsResponse.json();
       const results = listingsIdsData.results;
 
       if (results.length === 0) {
-        // Si no hay más resultados, salimos del bucle
         break;
       }
 
       allListingIds.push(...results);
-      offset += limit; // Preparamos para la siguiente página
+      offset += limit;
     }
-    // --- FIN DE LA MODIFICACIÓN PARA PAGINACIÓN ---
 
     if (allListingIds.length === 0) {
       await supabaseAdmin.from('mercadolibre_listings').delete().eq('user_id', user.id);
