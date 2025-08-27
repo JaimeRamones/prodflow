@@ -43,9 +43,10 @@ const AppProvider = ({ children }) => {
     const [purchaseOrders, setPurchaseOrders] = useState([]);
     const [notification, setNotification] = useState({ show: false, message: '', type: '' });
 
-    const showMessage = (message, type = 'info') => {
+    // --- CORRECCIÓN 1: Memoizamos la función showMessage ---
+    const showMessage = useCallback((message, type = 'info') => {
         setNotification({ show: true, message, type });
-    };
+    }, []);
 
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -62,49 +63,49 @@ const AppProvider = ({ children }) => {
         };
     }, []);
     
-    // --- FUNCIONES PARA REFRESCAR DATOS (OPTIMIZADAS CON useCallback) ---
+    // --- CORRECCIÓN 2: Añadimos las dependencias correctas a cada función de carga ---
     const fetchProducts = useCallback(async () => {
         const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
         if (error) { showMessage('Error al refrescar los productos.', 'error'); } 
         else { setProducts(data || []); }
-    }, []);
+    }, [showMessage]);
 
     const fetchSuppliers = useCallback(async () => {
         const { data, error } = await supabase.from('suppliers').select('*').order('name', { ascending: true });
         if (error) { showMessage('Error al refrescar los proveedores.', 'error'); }
         else { setSuppliers(data || []); }
-    }, []);
+    }, [showMessage]);
 
     const fetchCategories = useCallback(async () => {
         const { data, error } = await supabase.from('categories').select('*').order('name', { ascending: true });
         if (error) { showMessage('Error al refrescar las categorías.', 'error'); }
         else { setCategories(data || []); }
-    }, []);
+    }, [showMessage]);
 
     const fetchSalesOrders = useCallback(async () => {
         if (!session?.user?.id) return;
         const { data, error } = await supabase.from('sales_orders').select(`*, order_items ( * )`).eq('user_id', session.user.id).order('created_at', { ascending: false });
         if (error) { showMessage('Error al cargar pedidos de venta.', 'error'); } 
         else { setSalesOrders(data || []); }
-    }, [session]);
+    }, [session, showMessage]);
 
     const fetchSupplierOrders = useCallback(async () => {
         const { data, error } = await supabase.from('supplier_orders').select(`*`).order('created_at', { ascending: false });
         if (error) { showMessage('Error al cargar pedidos a proveedor.', 'error'); } 
         else { setSupplierOrders(data || []); }
-    }, []);
+    }, [showMessage]);
 
     const fetchPurchaseOrders = useCallback(async () => {
         const { data, error } = await supabase.from('purchase_orders').select(`*`).order('created_at', { ascending: false });
         if (error) { showMessage('Error al cargar órdenes de compra.', 'error'); } 
         else { setPurchaseOrders(data || []); }
-    }, []);
+    }, [showMessage]);
 
     const fetchKits = useCallback(async () => {
         const { data, error } = await supabase.from('kits').select(`*, components:kit_components(*)`).order('name', { ascending: true });
         if (error) showMessage('Error al cargar los kits.', 'error'); 
         else setKits(data || []);
-    }, []);
+    }, [showMessage]);
 
     // Carga inicial de datos cuando el usuario inicia sesión
     useEffect(() => {
@@ -116,7 +117,7 @@ const AppProvider = ({ children }) => {
                 fetchSalesOrders(),
                 fetchSupplierOrders(),
                 fetchPurchaseOrders(),
-                //fetchKits()
+                //fetchKits() // Mantenemos esto comentado como pediste
             ]);
         }
     }, [session, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchKits]);
@@ -132,7 +133,7 @@ const AppProvider = ({ children }) => {
 };
 
 
-// Componente principal de la interfaz (barra lateral y contenido) - RESTAURADO A TU VERSIÓN ORIGINAL
+// --- TU CÓDIGO ORIGINAL SE MANTIENE INTACTO DESDE AQUÍ ---
 const AppContent = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [productToEdit, setProductToEdit] = useState(null);
