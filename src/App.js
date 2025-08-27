@@ -21,7 +21,7 @@ import Notification from './components/Notification';
 import EditProductModal from './components/EditProductModal';
 import ConfirmDeleteModal from './components/ConfirmDeleteModal';
 import CreatePublicationModal from './components/CreatePublicationModal';
-// Importamos el nuevo componente de la Landing Page
+// Importamos el componente de la Landing Page
 import LandingPage from './components/LandingPage';
 
 const Icon = ({ path }) => (
@@ -32,13 +32,13 @@ const Icon = ({ path }) => (
 
 export const AppContext = createContext();
 
-// Tu AppProvider se mantiene igual
 const AppProvider = ({ children }) => {
     const [session, setSession] = useState(null);
     const [loading, setLoading] = useState(true);
     const [products, setProducts] = useState([]);
     const [suppliers, setSuppliers] = useState([]);
     const [categories, setCategories] = useState([]);
+    const [kits, setKits] = useState([]);
     const [salesOrders, setSalesOrders] = useState([]);
     const [supplierOrders, setSupplierOrders] = useState([]);
     const [purchaseOrders, setPurchaseOrders] = useState([]);
@@ -69,7 +69,6 @@ const AppProvider = ({ children }) => {
         else { setProducts(data || []); }
     }, [showMessage]);
 
-    // ... (El resto de tus funciones fetch se mantienen exactamente igual)
     const fetchSuppliers = useCallback(async () => {
         const { data, error } = await supabase.from('suppliers').select('*').order('name', { ascending: true });
         if (error) { showMessage('Error al refrescar los proveedores.', 'error'); }
@@ -101,6 +100,12 @@ const AppProvider = ({ children }) => {
         else { setPurchaseOrders(data || []); }
     }, [showMessage]);
 
+    const fetchKits = useCallback(async () => {
+        const { data, error } = await supabase.from('kits').select(`*, components:kit_components(*)`).order('name', { ascending: true });
+        if (error) showMessage('Error al cargar los kits.', 'error'); 
+        else setKits(data || []);
+    }, [showMessage]);
+
     useEffect(() => {
         if (session) {
             Promise.all([
@@ -112,19 +117,18 @@ const AppProvider = ({ children }) => {
                 fetchPurchaseOrders(),
             ]);
         }
-    }, [session, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders]);
+    }, [session, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchKits]);
     
     const value = { 
         session, loading, showMessage, 
-        products, suppliers, categories, salesOrders, supplierOrders, purchaseOrders,
+        products, suppliers, categories, kits, salesOrders, supplierOrders, purchaseOrders,
         notification, setNotification, 
-        fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders 
+        fetchProducts, fetchSuppliers, fetchCategories, fetchKits, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders 
     };
     
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
-// Tu AppContent también se mantiene igual
 const AppContent = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [productToEdit, setProductToEdit] = useState(null);
@@ -215,7 +219,6 @@ const AppContent = () => {
                     <ul className="space-y-2">
                         <NavButton tabName="dashboard" iconPath="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z">Dashboard</NavButton>
                         <NavButton tabName="inventory" iconPath="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4">Inventario</NavButton>
-                        {/* ... (El resto de tus NavButtons se mantienen igual) ... */}
                         <NavButton tabName="entry" iconPath="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1">Entrada</NavButton>
                         <NavButton tabName="sales" iconPath="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">Ventas</NavButton>
                         <NavButton tabName="orders" iconPath="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">Pedidos</NavButton>
@@ -223,7 +226,7 @@ const AppContent = () => {
                         <NavButton tabName="kits" iconPath="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2zM6 18h2a2 2 0 002-2v-2a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2z">Kits</NavButton>
                         <NavButton tabName="history" iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">Historial</NavButton>
                     </ul>
-                     <ul className="pt-4 mt-4 space-y-2 border-t border-gray-700">
+                    <ul className="pt-4 mt-4 space-y-2 border-t border-gray-700">
                         <NavButton tabName="tools" iconPath="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z">Herramientas</NavButton>
                         <NavButton tabName="integrations" iconPath="M13 10V3L4 14h7v7l9-11h-7z">Integraciones</NavButton>
                         <NavButton tabName="publications" iconPath="M3 10h18M3 14h18M3 6h18">Publicaciones</NavButton>
@@ -250,7 +253,6 @@ const AppContent = () => {
     );
 };
 
-// El AppOrchestrator se mantiene igual
 const AppOrchestrator = () => {
     const { session, loading } = useContext(AppContext);
 
@@ -265,14 +267,10 @@ const AppOrchestrator = () => {
     return session ? <AppContent /> : <LoginScreen />;
 };
 
-// El componente principal App ahora es el ROUTER
 const App = () => (
     <BrowserRouter>
         <Routes>
-            {/* Ruta para la Landing Page */}
             <Route path="/" element={<LandingPage />} />
-            
-            {/* Ruta para la aplicación principal, envuelta en el Provider */}
             <Route path="/app" element={
                 <AppProvider>
                     <AppOrchestrator />
