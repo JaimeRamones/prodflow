@@ -64,13 +64,15 @@ serve(async (req) => {
     const meliUserId = mlTokens.meli_user_id;
     if (!meliUserId) throw new Error('ML User ID is missing from credentials.');
 
+    // --- INICIO DE LA NUEVA LÓGICA CON search_type=scan ---
     const allListingIds = [];
-    let offset = 0;
-    const limit = 50;
+    let scrollId: string | null = null;
 
     while (true) {
-      // --- ESTA ES LA LÍNEA CORREGIDA ---
-      const url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?limit=${limit}&offset=${offset}`;
+      let url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?search_type=scan`;
+      if (scrollId) {
+        url += `&scroll_id=${scrollId}`;
+      }
       
       const listingsIdsResponse = await fetch(url, { 
         headers: { Authorization: `Bearer ${mlTokens.access_token}` } 
@@ -83,14 +85,21 @@ serve(async (req) => {
 
       const listingsIdsData = await listingsIdsResponse.json();
       const results = listingsIdsData.results;
+      scrollId = listingsIdsData.scroll_id; // Guardamos el scroll_id para la siguiente iteración
 
-      if (results.length === 0) {
+      if (!results || results.length === 0) {
+        // Si no hay más resultados, salimos del bucle
         break;
       }
-
+      
       allListingIds.push(...results);
-      offset += limit;
+
+      // Si no hay scroll_id, significa que hemos llegado al final en la primera página
+      if (!scrollId) {
+        break;
+      }
     }
+    // --- FIN DE LA NUEVA LÓGICA ---
 
     if (allListingIds.length === 0) {
       await supabaseAdmin.from('mercadolibre_listings').delete().eq('user_id', user.id);
