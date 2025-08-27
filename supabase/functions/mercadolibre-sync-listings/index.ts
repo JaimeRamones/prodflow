@@ -69,8 +69,7 @@ serve(async (req) => {
     const limit = 50;
 
     while (true) {
-      // --- AQUÍ ESTÁ LA CORRECCIÓN ---
-      // Se construye la URL con los parámetros correctos
+      // --- ESTA ES LA LÍNEA CORREGIDA ---
       const url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?limit=${limit}&offset=${offset}`;
       
       const listingsIdsResponse = await fetch(url, { 
@@ -79,8 +78,7 @@ serve(async (req) => {
 
       if (!listingsIdsResponse.ok) {
         const err = await listingsIdsResponse.json();
-        // Se añade el detalle del error para mayor claridad
-        throw new Error(`Failed to fetch listing IDs from ML: ${err.message}. Invalid limit and offset values?`);
+        throw new Error(`Failed to fetch listing IDs from ML: ${err.message}`);
       }
 
       const listingsIdsData = await listingsIdsResponse.json();
