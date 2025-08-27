@@ -97,7 +97,7 @@ const LandingPage = () => {
                 {/* Footer */}
                 <footer className="border-t border-slate-800">
                     <div className="container mx-auto px-6 py-8 text-center">
-                        <p className="text-slate-400">&copy; 2024 ProdFlow. Todos los derechos reservados.</p>
+                        <p className="text-slate-400">&copy; 2025 ProdFlow. All Rights Reserved.</p>
                     </div>
                 </footer>
             </div>
