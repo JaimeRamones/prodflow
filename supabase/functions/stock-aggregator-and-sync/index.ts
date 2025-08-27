@@ -28,7 +28,7 @@ async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseCl
   return newTokens.access_token
 }
 
-// Función para actualizar un solo ítem en Mercado Libre
+// Función para actualizar un solo ítem en Mercado Libre (maneja simples y variaciones)
 async function updateMeliItem(listing: any, accessToken: string) {
     let url: string;
     let body: string;
@@ -37,14 +37,15 @@ async function updateMeliItem(listing: any, accessToken: string) {
       url = `https://api.mercadolibre.com/items/${listing.meli_id}/variations`;
       body = JSON.stringify([{
         id: listing.meli_variation_id,
-        price: listing.prodflow_price,
-        available_quantity: listing.prodflow_stock,
+        available_quantity: listing.publishable_stock,
+        // Aquí se podría añadir el precio si también se calcula
       }]);
     } else {
       url = `https://api.mercadolibre.com/items/${listing.meli_id}`;
       body = JSON.stringify({
-        price: listing.prodflow_price,
-        available_quantity: listing.prodflow_stock,
+        available_quantity: listing.publishable_stock,
+        status: listing.publishable_stock > 0 ? 'active' : 'paused',
+        // Aquí se podría añadir el precio
       });
     }
 
@@ -61,11 +62,10 @@ async function updateMeliItem(listing: any, accessToken: string) {
     if (!response.ok) {
       const errorBody = await response.json();
       console.error(`Failed to update item ${listing.meli_id}: ${errorBody.message}`);
-      return false; // Indica que la actualización falló
+      return false;
     }
-    return true; // Indica que la actualización fue exitosa
+    return true;
 }
-
 
 serve(async (_req) => {
   try {
@@ -74,83 +74,87 @@ serve(async (_req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // 1. Obtener las credenciales del único usuario (o adaptar si hay múltiples usuarios)
-    const { data: usersWithCreds, error: usersError } = await supabaseAdmin
-      .from('meli_credentials')
-      .select('user_id, access_token, refresh_token, expires_at');
-      
-    if (usersError) throw usersError;
-    if (!usersWithCreds || usersWithCreds.length === 0) {
-      return new Response(JSON.stringify({ message: "No users with ML credentials found to sync." }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
-      });
+    console.log("Iniciando el proceso de agregación y sincronización de stock.");
+
+    // 1. Obtener todos los SKUs únicos de nuestro inventario y del de proveedores.
+    const { data: productSkus } = await supabaseAdmin.from('products').select('sku');
+    const { data: supplierSkus } = await supabaseAdmin.from('supplier_stock_items').select('sku');
+    const allSkus = [...new Set([
+        ...(productSkus || []).map(p => p.sku), 
+        ...(supplierSkus || []).map(s => s.sku)
+    ])];
+
+    console.log(`Se procesarán ${allSkus.length} SKUs únicos.`);
+
+    // 2. Obtener las credenciales de Mercado Libre (asumimos un solo usuario por ahora).
+    const { data: tokenData, error: tokenError } = await supabaseAdmin
+      .from('meli_credentials').select('*').single();
+    if (tokenError || !tokenData) throw new Error("No se encontraron credenciales de Mercado Libre.");
+    
+    let accessToken = tokenData.access_token;
+    if (new Date(tokenData.expires_at) < new Date()) {
+      accessToken = await getRefreshedToken(tokenData.refresh_token, tokenData.user_id, supabaseAdmin);
     }
+    
+    // 3. Procesar cada SKU.
+    for (const sku of allSkus) {
+      let totalStock = 0;
 
-    let updatedCount = 0;
-
-    // 2. Iterar sobre cada usuario que tenga credenciales
-    for (const creds of usersWithCreds) {
-      let accessToken = creds.access_token;
-      if (creds.expires_at && new Date(creds.expires_at) < new Date()) {
-        accessToken = await getRefreshedToken(creds.refresh_token, supabaseAdmin, creds.user_id);
+      // Obtener stock propio (Grimax) y su stock de seguridad
+      const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock').eq('sku', sku).single();
+      if (myProduct) {
+        totalStock += (myProduct.stock_disponible || 0) - (myProduct.safety_stock || 0);
       }
 
-      // 3. Obtener todos los productos y publicaciones de ese usuario
-      const { data: products, error: productsError } = await supabaseAdmin
-        .from('products')
-        .select('sku, stock_disponible, sale_price')
-        .eq('user_id', creds.user_id);
-
-      const { data: listings, error: listingsError } = await supabaseAdmin
-        .from('mercadolibre_listings')
-        .select('sku, meli_id, meli_variation_id, available_quantity, price')
-        .eq('user_id', creds.user_id);
-
-      if (productsError || listingsError) {
-        console.error(`Error fetching data for user ${creds.user_id}`);
-        continue; // Saltar al siguiente usuario si hay un error
-      }
+      // Obtener stock de proveedores y sus stocks de seguridad
+      const { data: supplierItems } = await supabaseAdmin
+        .from('supplier_stock_items')
+        .select('quantity, warehouses (safety_stock)')
+        .eq('sku', sku);
       
-      // 4. Comparar y actualizar
-      for (const product of products) {
-        const listingToUpdate = listings.find(l => l.sku === product.sku);
+      if (supplierItems) {
+        for (const item of supplierItems) {
+          // Asegurarse de que 'warehouses' no sea un array
+          const warehouseData = Array.isArray(item.warehouses) ? item.warehouses[0] : item.warehouses;
+          totalStock += (item.quantity || 0) - (warehouseData?.safety_stock || 0);
+        }
+      }
 
-        if (listingToUpdate) {
-          const stockChanged = product.stock_disponible !== listingToUpdate.available_quantity;
-          const priceChanged = product.sale_price !== listingToUpdate.price;
+      const publishableStock = Math.max(0, totalStock);
+      console.log(`SKU: ${sku} | Stock Publicable Calculado: ${publishableStock}`);
 
-          if (stockChanged || priceChanged) {
-            const success = await updateMeliItem({
-              meli_id: listingToUpdate.meli_id,
-              meli_variation_id: listingToUpdate.meli_variation_id,
-              prodflow_price: product.sale_price,
-              prodflow_stock: product.stock_disponible,
-            }, accessToken);
-            
-            if (success) {
-              updatedCount++;
-              // Actualizar la base de datos local para que no se vuelva a sincronizar innecesariamente
-              await supabaseAdmin
-                .from('mercadolibre_listings')
-                .update({
-                  available_quantity: product.stock_disponible,
-                  price: product.sale_price,
-                  last_synced_at: new Date().toISOString()
-                })
-                .eq('sku', product.sku)
-                .eq('user_id', creds.user_id);
-            }
-          }
+      // 4. Encontrar las publicaciones de ML que usan este SKU.
+      const { data: listingsToUpdate } = await supabaseAdmin
+        .from('mercadolibre_listings')
+        .select('meli_id, meli_variation_id, available_quantity, status')
+        .eq('sku', sku);
+      
+      if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
+
+      // 5. Actualizar cada publicación en Mercado Libre.
+      for (const listing of listingsToUpdate) {
+        const needsUpdate = listing.available_quantity !== publishableStock || 
+                              (publishableStock > 0 && listing.status !== 'active') ||
+                              (publishableStock === 0 && listing.status !== 'paused');
+
+        if (needsUpdate) {
+          console.log(`Actualizando publicación ${listing.meli_id} a stock ${publishableStock}`);
+          
+          await updateMeliItem({
+            meli_id: listing.meli_id,
+            meli_variation_id: listing.meli_variation_id,
+            publishable_stock: publishableStock,
+          }, accessToken);
         }
       }
     }
 
-    return new Response(JSON.stringify({ success: true, message: `Sync completed. ${updatedCount} items updated.` }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+    return new Response(JSON.stringify({ success: true, message: "Sincronización de stock agregado completada." }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error('Error in cron job function:', error.message);
+    console.error('Error en la función stock-aggregator-and-sync:', error.message);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
