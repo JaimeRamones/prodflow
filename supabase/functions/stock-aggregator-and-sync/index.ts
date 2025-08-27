@@ -38,14 +38,12 @@ async function updateMeliItem(listing: any, accessToken: string) {
       body = JSON.stringify([{
         id: listing.meli_variation_id,
         available_quantity: listing.publishable_stock,
-        // Aquí se podría añadir el precio si también se calcula
       }]);
     } else {
       url = `https://api.mercadolibre.com/items/${listing.meli_id}`;
       body = JSON.stringify({
         available_quantity: listing.publishable_stock,
         status: listing.publishable_stock > 0 ? 'active' : 'paused',
-        // Aquí se podría añadir el precio
       });
     }
 
@@ -76,80 +74,89 @@ serve(async (_req) => {
 
     console.log("Iniciando el proceso de agregación y sincronización de stock.");
 
-    // 1. Obtener todos los SKUs únicos de nuestro inventario y del de proveedores.
-    const { data: productSkus } = await supabaseAdmin.from('products').select('sku');
-    const { data: supplierSkus } = await supabaseAdmin.from('supplier_stock_items').select('sku');
-    const allSkus = [...new Set([
-        ...(productSkus || []).map(p => p.sku), 
-        ...(supplierSkus || []).map(s => s.sku)
-    ])];
+    // --- INICIO DE LA CORRECCIÓN ---
+    // 1. Obtener las credenciales de TODOS los usuarios que tengan conexión con ML.
+    const { data: allUserCredentials, error: credsError } = await supabaseAdmin
+      .from('meli_credentials')
+      .select('*');
 
-    console.log(`Se procesarán ${allSkus.length} SKUs únicos.`);
+    if (credsError) throw credsError;
 
-    // 2. Obtener las credenciales de Mercado Libre (asumimos un solo usuario por ahora).
-    const { data: tokenData, error: tokenError } = await supabaseAdmin
-      .from('meli_credentials').select('*').single();
-    if (tokenError || !tokenData) throw new Error("No se encontraron credenciales de Mercado Libre.");
-    
-    let accessToken = tokenData.access_token;
-    if (new Date(tokenData.expires_at) < new Date()) {
-      accessToken = await getRefreshedToken(tokenData.refresh_token, tokenData.user_id, supabaseAdmin);
+    if (!allUserCredentials || allUserCredentials.length === 0) {
+      console.log("No se encontraron credenciales de usuarios para sincronizar. Finalizando.");
+      return new Response(JSON.stringify({ success: true, message: "No users to sync." }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
     
-    // 3. Procesar cada SKU.
-    for (const sku of allSkus) {
-      let totalStock = 0;
+    console.log(`Se encontraron credenciales para ${allUserCredentials.length} usuario(s).`);
 
-      // Obtener stock propio (Grimax) y su stock de seguridad
-      const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock').eq('sku', sku).single();
-      if (myProduct) {
-        totalStock += (myProduct.stock_disponible || 0) - (myProduct.safety_stock || 0);
-      }
-
-      // Obtener stock de proveedores y sus stocks de seguridad
-      const { data: supplierItems } = await supabaseAdmin
-        .from('supplier_stock_items')
-        .select('quantity, warehouses (safety_stock)')
-        .eq('sku', sku);
+    // 2. Iterar sobre cada conjunto de credenciales (cada usuario).
+    for (const tokenData of allUserCredentials) {
+      const userId = tokenData.user_id;
+      console.log(`Procesando para el usuario: ${userId}`);
       
-      if (supplierItems) {
-        for (const item of supplierItems) {
-          // Asegurarse de que 'warehouses' no sea un array
-          const warehouseData = Array.isArray(item.warehouses) ? item.warehouses[0] : item.warehouses;
-          totalStock += (item.quantity || 0) - (warehouseData?.safety_stock || 0);
+      let accessToken = tokenData.access_token;
+      if (new Date(tokenData.expires_at) < new Date()) {
+        console.log(`Token expirado para ${userId}, refrescando...`);
+        accessToken = await getRefreshedToken(tokenData.refresh_token, supabaseAdmin, userId);
+      }
+      
+      // 3. Obtener todos los SKUs únicos para ESTE usuario.
+      const { data: productSkus } = await supabaseAdmin.from('products').select('sku').eq('user_id', userId);
+      const { data: supplierSkus } = await supabaseAdmin.from('supplier_stock_items').select('sku').eq('user_id', userId);
+      
+      const allSkus = [...new Set([
+          ...(productSkus || []).map(p => p.sku), 
+          ...(supplierSkus || []).map(s => s.sku)
+      ])];
+
+      console.log(`Usuario ${userId} tiene ${allSkus.length} SKUs únicos para procesar.`);
+
+      // 4. Procesar cada SKU para ESTE usuario.
+      for (const sku of allSkus) {
+        let totalStock = 0;
+
+        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock').eq('sku', sku).eq('user_id', userId).single();
+        if (myProduct) {
+          totalStock += (myProduct.stock_disponible || 0) - (myProduct.safety_stock || 0);
         }
-      }
 
-      const publishableStock = Math.max(0, totalStock);
-      console.log(`SKU: ${sku} | Stock Publicable Calculado: ${publishableStock}`);
+        const { data: supplierItems } = await supabaseAdmin.from('supplier_stock_items').select('quantity, warehouses (safety_stock)').eq('sku', sku).eq('user_id', userId);
+        
+        if (supplierItems) {
+          for (const item of supplierItems) {
+            const warehouseData = Array.isArray(item.warehouses) ? item.warehouses[0] : item.warehouses;
+            totalStock += (item.quantity || 0) - (warehouseData?.safety_stock || 0);
+          }
+        }
 
-      // 4. Encontrar las publicaciones de ML que usan este SKU.
-      const { data: listingsToUpdate } = await supabaseAdmin
-        .from('mercadolibre_listings')
-        .select('meli_id, meli_variation_id, available_quantity, status')
-        .eq('sku', sku);
-      
-      if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
+        const publishableStock = Math.max(0, totalStock);
+        
+        const { data: listingsToUpdate } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, meli_variation_id, available_quantity, status').eq('sku', sku).eq('user_id', userId);
+        
+        if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
 
-      // 5. Actualizar cada publicación en Mercado Libre.
-      for (const listing of listingsToUpdate) {
-        const needsUpdate = listing.available_quantity !== publishableStock || 
-                              (publishableStock > 0 && listing.status !== 'active') ||
-                              (publishableStock === 0 && listing.status !== 'paused');
+        for (const listing of listingsToUpdate) {
+          const needsUpdate = listing.available_quantity !== publishableStock || 
+                                (publishableStock > 0 && listing.status !== 'active') ||
+                                (publishableStock === 0 && listing.status !== 'paused');
 
-        if (needsUpdate) {
-          console.log(`Actualizando publicación ${listing.meli_id} a stock ${publishableStock}`);
-          
-          await updateMeliItem({
-            meli_id: listing.meli_id,
-            meli_variation_id: listing.meli_variation_id,
-            publishable_stock: publishableStock,
-          }, accessToken);
+          if (needsUpdate) {
+            console.log(`Actualizando SKU ${sku} (Pub ID: ${listing.meli_id}) a stock ${publishableStock}`);
+            
+            await updateMeliItem({
+              meli_id: listing.meli_id,
+              meli_variation_id: listing.meli_variation_id,
+              publishable_stock: publishableStock,
+            }, accessToken);
+          }
         }
       }
     }
+    // --- FIN DE LA CORRECCIÓN ---
 
-    return new Response(JSON.stringify({ success: true, message: "Sincronización de stock agregado completada." }), {
+    return new Response(JSON.stringify({ success: true, message: "Sincronización de stock agregado completada para todos los usuarios." }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
