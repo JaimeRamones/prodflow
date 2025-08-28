@@ -102,28 +102,24 @@ serve(async (_req) => {
             const itemsToInsert = [];
 
             for (const line of lines) {
-                // --- LÓGICA DE PARSEO DEFINITIVA (DE DERECHA A IZQUIERDA) ---
                 const trimmedLine = line.trim();
                 if (!trimmedLine) continue;
 
-                // 1. Identificar el Precio (desde el final)
+                // --- LÓGICA DE PARSEO DEFINITIVA (DE DERECHA A IZQUIERDA) ---
                 const lastSpaceIndex = trimmedLine.lastIndexOf(' ');
                 if (lastSpaceIndex === -1) {
-                    console.warn(`Formato inválido (No se encontró Precio): "${line}"`);
+                    console.warn(`Línea ignorada por formato incorrecto (sin espacios): "${line}"`);
                     continue;
                 }
                 const priceStr = trimmedLine.substring(lastSpaceIndex + 1);
                 let remaining = trimmedLine.substring(0, lastSpaceIndex).trimEnd();
 
-                // 2. Identificar la Cantidad
                 const penultimateSpaceIndex = remaining.lastIndexOf(' ');
                 if (penultimateSpaceIndex === -1) {
                     console.warn(`Formato inválido (No se encontró Cantidad): "${line}"`);
                     continue;
                 }
                 const quantityStr = remaining.substring(penultimateSpaceIndex + 1);
-
-                // 3. Extraer el SKU (todo lo que queda, con espacios originales)
                 const sku = remaining.substring(0, penultimateSpaceIndex).trimEnd();
 
                 if (!sku) {
