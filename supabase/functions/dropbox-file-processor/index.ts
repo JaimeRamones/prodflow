@@ -1,36 +1,38 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
-import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
-import { Dropbox } from 'https://esm.sh/dropbox@10.34.0'
 
-// Función para refrescar el token de Dropbox
-async function getRefreshedDropboxToken(refreshToken: string, supabaseAdmin: SupabaseClient, userId: string) {
-    const DROPBOX_APP_KEY = Deno.env.get('DROPBOX_APP_KEY')!
-    const DROPBOX_APP_SECRET = Deno.env.get('DROPBOX_APP_SECRET')!
-    
+// --- Se restaura la función para obtener el token desde las variables de entorno ---
+async function getDropboxAccessToken() {
+    const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')
+    const appKey = Deno.env.get('DROPBOX_APP_KEY')
+    const appSecret = Deno.env.get('DROPBOX_APP_SECRET')
+
+    if (!refreshToken || !appKey || !appSecret) {
+        throw new Error('Faltan secretos de Dropbox en la configuración (APP_KEY, APP_SECRET, o REFRESH_TOKEN).');
+    }
+
     const response = await fetch('https://api.dropbox.com/oauth2/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
             grant_type: 'refresh_token',
             refresh_token: refreshToken,
-            client_id: DROPBOX_APP_KEY,
-            client_secret: DROPBOX_APP_SECRET,
+            client_id: appKey,
+            client_secret: appSecret,
         }),
     });
 
-    if (!response.ok) throw new Error('Failed to refresh Dropbox token');
-    
-    const newTokens = await response.json();
-    await supabaseAdmin.from('dropbox_credentials').update({
-        access_token: newTokens.access_token,
-        // Dropbox a veces no devuelve un nuevo refresh token, usamos el viejo si no viene
-        refresh_token: newTokens.refresh_token || refreshToken,
-        expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
-    }).eq('user_id', userId);
+    if (!response.ok) {
+        const errorBody = await response.json();
+        console.error("Error al refrescar el token de Dropbox:", errorBody);
+        throw new Error(`No se pudo obtener un nuevo access token de Dropbox: ${errorBody.error_description}`);
+    }
 
-    return newTokens.access_token;
+    const data = await response.json();
+    return data.access_token;
 }
+
 
 serve(async (_req) => {
     try {
@@ -38,81 +40,100 @@ serve(async (_req) => {
             Deno.env.get('SUPABASE_URL') ?? '',
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         );
+        
+        // Obtenemos un token nuevo en cada ejecución
+        const dropboxToken = await getDropboxAccessToken();
 
         console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
-        const { data: allUserCredentials, error: credsError } = await supabaseAdmin
-            .from('dropbox_credentials')
-            .select('*');
-
-        if (credsError) throw credsError;
-        if (!allUserCredentials || allUserCredentials.length === 0) {
-            return new Response(JSON.stringify({ message: "No users with Dropbox credentials found." }), {
+        const { data: warehouses, error: warehouseError } = await supabaseAdmin
+            .from('warehouses')
+            .select('id, file_name, user_id') // Obtenemos el user_id para asociar los items
+            .eq('type', 'proveedor');
+        
+        if (warehouseError) throw warehouseError;
+        if (!warehouses || warehouses.length === 0) {
+            return new Response(JSON.stringify({ message: "No se encontraron almacenes de tipo 'proveedor'." }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
             });
         }
 
-        for (const tokenData of allUserCredentials) {
-            const userId = tokenData.user_id;
-            let accessToken = tokenData.access_token;
+        const listFilesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${dropboxToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path: '' }),
+        });
 
-            if (new Date(tokenData.expires_at) < new Date()) {
-                accessToken = await getRefreshedDropboxToken(tokenData.refresh_token, supabaseAdmin, userId);
+        if (!listFilesResponse.ok) {
+            throw new Error('Error al listar archivos de Dropbox.');
+        }
+
+        const filesData = await listFilesResponse.json();
+        const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.endsWith('.txt') || file.name.endsWith('.csv')));
+
+        if (stockFileEntries.length === 0) {
+            return new Response(JSON.stringify({ message: "No se encontraron archivos para procesar." }), { 
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 
+            });
+        }
+
+        for (const file of stockFileEntries) {
+            const warehouse = warehouses.find(w => w.file_name === file.name);
+            if (!warehouse) {
+                console.log(`Archivo '${file.name}' ignorado: no se encontró un almacén coincidente.`);
+                continue;
             }
 
-            const dbx = new Dropbox({ accessToken });
-            const { result: { entries } } = await dbx.filesListFolder({ path: '' });
+            const downloadResponse = await fetch('https://content.dropboxapi.com/2/files/download', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${dropboxToken}`,
+                    'Dropbox-API-Arg': JSON.stringify({ path: file.path_lower }),
+                },
+            });
 
-            const { data: warehouses } = await supabaseAdmin.from('warehouses').select('id, file_name').eq('user_id', userId);
-            if (!warehouses) continue;
+            if (!downloadResponse.ok) {
+                console.error(`Error al descargar el archivo: ${file.name}`);
+                continue;
+            }
 
-            for (const file of entries) {
-                const warehouse = warehouses.find(w => w.file_name === file.name);
-                if (!warehouse || !file.path_lower) continue;
+            const fileContent = await downloadResponse.text();
+            const lines = fileContent.split('\n').filter(line => line.trim() !== '');
 
-                console.log(`Procesando archivo: ${file.name} para el almacén ID: ${warehouse.id}`);
-                
-                const { result: fileData } = await dbx.filesDownload({ path: file.path_lower });
-                const content = await (fileData as any).fileBlob.text();
-                const lines = content.split('\n').filter(line => line.trim() !== '');
+            const itemsToUpsert = [];
 
-                const itemsToUpsert = [];
+            for (const line of lines) {
+                const match = line.match(/^(.+?)\s+(\d+)\s+([\d,.]+)$/);
+                if (match) {
+                    const sku = match[1].trim();
+                    const quantity = parseInt(match[2], 10);
+                    const cost = parseFloat(match[3].replace(',', '.'));
 
-                for (const line of lines) {
-                    // --- LÓGICA DE PARSEO MEJORADA Y PRECISA ---
-                    // Esta expresión regular captura el SKU (con espacios), el stock y el precio.
-                    const match = line.match(/^(.+?)\s+(\d+)\s+([\d,.]+)$/);
-
-                    if (match) {
-                        const sku = match[1].trim(); // El SKU capturado, sin espacios extra al inicio/final
-                        const quantity = parseInt(match[2], 10);
-                        const cost = parseFloat(match[3].replace(',', '.')); // Reemplaza comas por puntos para el decimal
-
-                        if (sku && !isNaN(quantity) && !isNaN(cost)) {
-                            itemsToUpsert.push({
-                                user_id: userId,
-                                warehouse_id: warehouse.id,
-                                sku: sku, // Se guarda el SKU con sus espacios internos
-                                quantity: quantity,
-                                cost: cost, // Asegúrate que tu tabla se llame 'cost' y no 'cost_price'
-                                last_updated: new Date().toISOString(),
-                            });
-                        }
-                    } else {
-                        console.warn(`La línea no coincide con el formato esperado y fue ignorada: "${line}"`);
+                    if (sku && !isNaN(quantity) && !isNaN(cost)) {
+                        itemsToUpsert.push({
+                            user_id: warehouse.user_id, // Usamos el user_id del almacén
+                            warehouse_id: warehouse.id,
+                            sku: sku,
+                            quantity: quantity,
+                            cost: cost,
+                            last_updated: new Date().toISOString(),
+                        });
                     }
+                } else {
+                    console.warn(`La línea no coincide con el formato esperado y fue ignorada: "${line}"`);
                 }
+            }
 
-                if (itemsToUpsert.length > 0) {
-                    // Borramos los datos viejos de este almacén antes de insertar los nuevos
-                    await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
-                    
-                    // Insertamos todos los nuevos items en una sola operación
-                    const { error: upsertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToUpsert);
-                    if (upsertError) throw upsertError;
+            if (itemsToUpsert.length > 0) {
+                await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
+                
+                const { error: upsertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToUpsert);
+                if (upsertError) throw upsertError;
 
-                    console.log(`Se procesaron y guardaron ${itemsToUpsert.length} items para el archivo ${file.name}.`);
-                }
+                console.log(`Se procesaron y guardaron ${itemsToUpsert.length} items para el archivo ${file.name}.`);
             }
         }
 
