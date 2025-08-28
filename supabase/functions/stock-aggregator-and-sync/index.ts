@@ -31,21 +31,35 @@ async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseCl
 // Función para actualizar un solo ítem en Mercado Libre (maneja simples y variaciones)
 async function updateMeliItem(listing: any, accessToken: string) {
     let url: string;
-    let body: string;
+    let payload: any;
 
+    // --- INICIO DE LA CORRECCIÓN ---
+    // Se construye el payload dinámicamente para incluir el precio
     if (listing.meli_variation_id) {
       url = `https://api.mercadolibre.com/items/${listing.meli_id}/variations`;
-      body = JSON.stringify([{
+      const variationPayload: { id: any; available_quantity: any; price?: number } = {
         id: listing.meli_variation_id,
         available_quantity: listing.publishable_stock,
-      }]);
+      };
+      if (listing.publishable_price !== undefined) {
+        variationPayload.price = listing.publishable_price;
+      }
+      payload = [variationPayload];
     } else {
       url = `https://api.mercadolibre.com/items/${listing.meli_id}`;
-      body = JSON.stringify({
+      const dynamicPayload: { available_quantity: number, status?: string, price?: number } = {
         available_quantity: listing.publishable_stock,
-        status: listing.publishable_stock > 0 ? 'active' : 'paused',
-      });
+      };
+      if (listing.publishable_price !== undefined) {
+        dynamicPayload.price = listing.publishable_price;
+      }
+      const newStatus = listing.publishable_stock > 0 ? 'active' : 'paused';
+      if (listing.current_status !== newStatus) {
+        dynamicPayload.status = newStatus;
+      }
+      payload = dynamicPayload;
     }
+    // --- FIN DE LA CORRECCIÓN ---
 
     const response = await fetch(url, {
       method: 'PUT',
@@ -54,12 +68,12 @@ async function updateMeliItem(listing: any, accessToken: string) {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: body,
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
       const errorBody = await response.json();
-      console.error(`Failed to update item ${listing.meli_id}: ${errorBody.message}`);
+      console.error(`Failed to update item ${listing.meli_id}:`, errorBody);
       return false;
     }
     return true;
@@ -72,10 +86,8 @@ serve(async (_req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    console.log("Iniciando el proceso de agregación y sincronización de stock.");
+    console.log("Iniciando el proceso de agregación y sincronización de stock y precio.");
 
-    // --- INICIO DE LA CORRECCIÓN ---
-    // 1. Obtener las credenciales de TODOS los usuarios que tengan conexión con ML.
     const { data: allUserCredentials, error: credsError } = await supabaseAdmin
       .from('meli_credentials')
       .select('*');
@@ -91,7 +103,6 @@ serve(async (_req) => {
     
     console.log(`Se encontraron credenciales para ${allUserCredentials.length} usuario(s).`);
 
-    // 2. Iterar sobre cada conjunto de credenciales (cada usuario).
     for (const tokenData of allUserCredentials) {
       const userId = tokenData.user_id;
       console.log(`Procesando para el usuario: ${userId}`);
@@ -102,7 +113,6 @@ serve(async (_req) => {
         accessToken = await getRefreshedToken(tokenData.refresh_token, supabaseAdmin, userId);
       }
       
-      // 3. Obtener todos los SKUs únicos para ESTE usuario.
       const { data: productSkus } = await supabaseAdmin.from('products').select('sku').eq('user_id', userId);
       const { data: supplierSkus } = await supabaseAdmin.from('supplier_stock_items').select('sku').eq('user_id', userId);
       
@@ -113,11 +123,11 @@ serve(async (_req) => {
 
       console.log(`Usuario ${userId} tiene ${allSkus.length} SKUs únicos para procesar.`);
 
-      // 4. Procesar cada SKU para ESTE usuario.
       for (const sku of allSkus) {
         let totalStock = 0;
-
-        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock').eq('sku', sku).eq('user_id', userId).single();
+        
+        // --- CORRECCIÓN: Obtener también el precio de venta ---
+        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock, sale_price').eq('sku', sku).eq('user_id', userId).single();
         if (myProduct) {
           totalStock += (myProduct.stock_disponible || 0) - (myProduct.safety_stock || 0);
         }
@@ -132,31 +142,35 @@ serve(async (_req) => {
         }
 
         const publishableStock = Math.max(0, totalStock);
+        const publishablePrice = myProduct?.sale_price; // Usamos el precio de nuestro producto
         
-        const { data: listingsToUpdate } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, meli_variation_id, available_quantity, status').eq('sku', sku).eq('user_id', userId);
+        // --- CORRECCIÓN: Obtener también el precio de la publicación ---
+        const { data: listingsToUpdate } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, meli_variation_id, available_quantity, status, price').eq('sku', sku).eq('user_id', userId);
         
         if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
 
         for (const listing of listingsToUpdate) {
-          const needsUpdate = listing.available_quantity !== publishableStock || 
-                                (publishableStock > 0 && listing.status !== 'active') ||
-                                (publishableStock === 0 && listing.status !== 'paused');
+          // --- CORRECCIÓN: Comprobar si el precio también necesita actualizarse ---
+          const stockNeedsUpdate = listing.available_quantity !== publishableStock;
+          const priceNeedsUpdate = publishablePrice !== undefined && listing.price !== publishablePrice;
+          const statusNeedsUpdate = (publishableStock > 0 && listing.status !== 'active') || (publishableStock === 0 && listing.status !== 'paused');
 
-          if (needsUpdate) {
-            console.log(`Actualizando SKU ${sku} (Pub ID: ${listing.meli_id}) a stock ${publishableStock}`);
+          if (stockNeedsUpdate || priceNeedsUpdate || statusNeedsUpdate) {
+            console.log(`Actualizando SKU ${sku} (Pub ID: ${listing.meli_id}) -> Stock: ${publishableStock}, Precio: ${publishablePrice}`);
             
             await updateMeliItem({
               meli_id: listing.meli_id,
               meli_variation_id: listing.meli_variation_id,
               publishable_stock: publishableStock,
+              publishable_price: publishablePrice,
+              current_status: listing.status
             }, accessToken);
           }
         }
       }
     }
-    // --- FIN DE LA CORRECCIÓN ---
 
-    return new Response(JSON.stringify({ success: true, message: "Sincronización de stock agregado completada para todos los usuarios." }), {
+    return new Response(JSON.stringify({ success: true, message: "Sincronización de stock y precio completada para todos los usuarios." }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
