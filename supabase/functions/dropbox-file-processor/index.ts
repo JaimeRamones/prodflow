@@ -2,7 +2,7 @@ import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
 
-// --- Se restaura la función para obtener el token desde las variables de entorno ---
+// Se mantiene tu función para obtener el token desde las variables de entorno
 async function getDropboxAccessToken() {
     const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')
     const appKey = Deno.env.get('DROPBOX_APP_KEY')
@@ -41,14 +41,13 @@ serve(async (_req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         );
         
-        // Obtenemos un token nuevo en cada ejecución
         const dropboxToken = await getDropboxAccessToken();
 
         console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
         const { data: warehouses, error: warehouseError } = await supabaseAdmin
             .from('warehouses')
-            .select('id, file_name, user_id') // Obtenemos el user_id para asociar los items
+            .select('id, name, user_id') 
             .eq('type', 'proveedor');
         
         if (warehouseError) throw warehouseError;
@@ -60,16 +59,11 @@ serve(async (_req) => {
 
         const listFilesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${dropboxToken}`,
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Authorization': `Bearer ${dropboxToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: '' }),
         });
 
-        if (!listFilesResponse.ok) {
-            throw new Error('Error al listar archivos de Dropbox.');
-        }
+        if (!listFilesResponse.ok) throw new Error('Error al listar archivos de Dropbox.');
 
         const filesData = await listFilesResponse.json();
         const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.endsWith('.txt') || file.name.endsWith('.csv')));
@@ -81,7 +75,9 @@ serve(async (_req) => {
         }
 
         for (const file of stockFileEntries) {
-            const warehouse = warehouses.find(w => w.file_name === file.name);
+            const providerName = file.name.replace(/\.(txt|csv)$/i, '');
+            const warehouse = warehouses.find(w => w.name.toLowerCase() === providerName.toLowerCase());
+
             if (!warehouse) {
                 console.log(`Archivo '${file.name}' ignorado: no se encontró un almacén coincidente.`);
                 continue;
@@ -114,11 +110,12 @@ serve(async (_req) => {
 
                     if (sku && !isNaN(quantity) && !isNaN(cost)) {
                         itemsToUpsert.push({
-                            user_id: warehouse.user_id, // Usamos el user_id del almacén
+                            user_id: warehouse.user_id,
                             warehouse_id: warehouse.id,
                             sku: sku,
                             quantity: quantity,
-                            cost: cost,
+                            // --- CORRECCIÓN CLAVE: Usar el nombre de columna correcto ---
+                            cost_price: cost, 
                             last_updated: new Date().toISOString(),
                         });
                     }
