@@ -1,153 +1,130 @@
-// supabase/functions/dropbox-file-processor/index.ts
-
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
+import { Dropbox } from 'https://esm.sh/dropbox@10.34.0'
 
-// --- Nueva Función para obtener un Access Token fresco ---
-async function getDropboxAccessToken() {
-    const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')
-    const appKey = Deno.env.get('DROPBOX_APP_KEY')
-    const appSecret = Deno.env.get('DROPBOX_APP_SECRET')
-
-    if (!refreshToken || !appKey || !appSecret) {
-        throw new Error('Faltan secretos de Dropbox en la configuración (APP_KEY, APP_SECRET, o REFRESH_TOKEN).');
-    }
-
+// Función para refrescar el token de Dropbox
+async function getRefreshedDropboxToken(refreshToken: string, supabaseAdmin: SupabaseClient, userId: string) {
+    const DROPBOX_APP_KEY = Deno.env.get('DROPBOX_APP_KEY')!
+    const DROPBOX_APP_SECRET = Deno.env.get('DROPBOX_APP_SECRET')!
+    
     const response = await fetch('https://api.dropbox.com/oauth2/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
             grant_type: 'refresh_token',
             refresh_token: refreshToken,
-            client_id: appKey,
-            client_secret: appSecret,
+            client_id: DROPBOX_APP_KEY,
+            client_secret: DROPBOX_APP_SECRET,
         }),
     });
 
-    if (!response.ok) {
-        const errorBody = await response.json();
-        console.error("Error al refrescar el token de Dropbox:", errorBody);
-        throw new Error(`No se pudo obtener un nuevo access token de Dropbox: ${errorBody.error_description}`);
-    }
+    if (!response.ok) throw new Error('Failed to refresh Dropbox token');
+    
+    const newTokens = await response.json();
+    await supabaseAdmin.from('dropbox_credentials').update({
+        access_token: newTokens.access_token,
+        // Dropbox a veces no devuelve un nuevo refresh token, usamos el viejo si no viene
+        refresh_token: newTokens.refresh_token || refreshToken,
+        expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
+    }).eq('user_id', userId);
 
-    const data = await response.json();
-    return data.access_token; // Devuelve el nuevo access_token de corta duración
+    return newTokens.access_token;
 }
 
-
 serve(async (_req) => {
-  try {
-    // Obtenemos un token nuevo en cada ejecución
-    const dropboxToken = await getDropboxAccessToken();
+    try {
+        const supabaseAdmin = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+        );
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
-    
-    const { data: warehouses, error: warehouseError } = await supabaseAdmin
-      .from('warehouses')
-      .select('id, name')
-      .eq('type', 'proveedor');
-    
-    if (warehouseError) throw warehouseError;
+        console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
-    const listFilesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${dropboxToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ path: '' }),
-    });
+        const { data: allUserCredentials, error: credsError } = await supabaseAdmin
+            .from('dropbox_credentials')
+            .select('*');
 
-    if (!listFilesResponse.ok) {
-      const errorBody = await listFilesResponse.text();
-      console.error("Error detallado de Dropbox al listar archivos:", errorBody);
-      throw new Error('Error al listar archivos de Dropbox.');
-    }
-
-    const filesData = await listFilesResponse.json();
-    const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.endsWith('.txt') || file.name.endsWith('.csv')));
-
-    if (stockFileEntries.length === 0) {
-      return new Response(JSON.stringify({ message: "No se encontraron archivos para procesar." }), { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 
-      });
-    }
-
-    for (const file of stockFileEntries) {
-        const providerName = file.name.replace(/\.(txt|csv)$/i, '');
-        const warehouse = warehouses.find(w => w.name.toLowerCase() === providerName.toLowerCase());
-
-        if (!warehouse) {
-            console.log(`Archivo '${file.name}' ignorado: no se encontró un proveedor coincidente.`);
-            continue;
+        if (credsError) throw credsError;
+        if (!allUserCredentials || allUserCredentials.length === 0) {
+            return new Response(JSON.stringify({ message: "No users with Dropbox credentials found." }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+            });
         }
 
-        const downloadResponse = await fetch('https://content.dropboxapi.com/2/files/download', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${dropboxToken}`,
-                'Dropbox-API-Arg': JSON.stringify({ path: file.path_lower }),
-            },
+        for (const tokenData of allUserCredentials) {
+            const userId = tokenData.user_id;
+            let accessToken = tokenData.access_token;
+
+            if (new Date(tokenData.expires_at) < new Date()) {
+                accessToken = await getRefreshedDropboxToken(tokenData.refresh_token, supabaseAdmin, userId);
+            }
+
+            const dbx = new Dropbox({ accessToken });
+            const { result: { entries } } = await dbx.filesListFolder({ path: '' });
+
+            const { data: warehouses } = await supabaseAdmin.from('warehouses').select('id, file_name').eq('user_id', userId);
+            if (!warehouses) continue;
+
+            for (const file of entries) {
+                const warehouse = warehouses.find(w => w.file_name === file.name);
+                if (!warehouse || !file.path_lower) continue;
+
+                console.log(`Procesando archivo: ${file.name} para el almacén ID: ${warehouse.id}`);
+                
+                const { result: fileData } = await dbx.filesDownload({ path: file.path_lower });
+                const content = await (fileData as any).fileBlob.text();
+                const lines = content.split('\n').filter(line => line.trim() !== '');
+
+                const itemsToUpsert = [];
+
+                for (const line of lines) {
+                    // --- LÓGICA DE PARSEO MEJORADA Y PRECISA ---
+                    // Esta expresión regular captura el SKU (con espacios), el stock y el precio.
+                    const match = line.match(/^(.+?)\s+(\d+)\s+([\d,.]+)$/);
+
+                    if (match) {
+                        const sku = match[1].trim(); // El SKU capturado, sin espacios extra al inicio/final
+                        const quantity = parseInt(match[2], 10);
+                        const cost = parseFloat(match[3].replace(',', '.')); // Reemplaza comas por puntos para el decimal
+
+                        if (sku && !isNaN(quantity) && !isNaN(cost)) {
+                            itemsToUpsert.push({
+                                user_id: userId,
+                                warehouse_id: warehouse.id,
+                                sku: sku, // Se guarda el SKU con sus espacios internos
+                                quantity: quantity,
+                                cost: cost, // Asegúrate que tu tabla se llame 'cost' y no 'cost_price'
+                                last_updated: new Date().toISOString(),
+                            });
+                        }
+                    } else {
+                        console.warn(`La línea no coincide con el formato esperado y fue ignorada: "${line}"`);
+                    }
+                }
+
+                if (itemsToUpsert.length > 0) {
+                    // Borramos los datos viejos de este almacén antes de insertar los nuevos
+                    await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
+                    
+                    // Insertamos todos los nuevos items en una sola operación
+                    const { error: upsertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToUpsert);
+                    if (upsertError) throw upsertError;
+
+                    console.log(`Se procesaron y guardaron ${itemsToUpsert.length} items para el archivo ${file.name}.`);
+                }
+            }
+        }
+
+        return new Response(JSON.stringify({ success: true, message: "Archivos de Dropbox procesados." }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
 
-        if (!downloadResponse.ok) {
-            console.error(`Error al descargar el archivo: ${file.name}`);
-            continue;
-        }
-
-        const fileContent = await downloadResponse.text();
-        const lines = fileContent.split('\n').filter(line => line.trim() !== '');
-
-        const itemsToUpsert = lines.map(line => {
-            const trimmedLine = line.trim();
-            if (!trimmedLine) return null;
-            const lastSpaceIndex = trimmedLine.lastIndexOf(' ');
-            if (lastSpaceIndex === -1) return null;
-            const costPriceStr = trimmedLine.substring(lastSpaceIndex + 1);
-            let remainingLine = trimmedLine.substring(0, lastSpaceIndex).trim();
-            const secondLastSpaceIndex = remainingLine.lastIndexOf(' ');
-            if (secondLastSpaceIndex === -1) return null;
-            const quantityStr = remainingLine.substring(secondLastSpaceIndex + 1);
-            const sku = remainingLine.substring(0, secondLastSpaceIndex).trim();
-            const quantity = parseInt(quantityStr, 10);
-            const cost_price = parseFloat(costPriceStr);
-            if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
-                return {
-                    warehouse_id: warehouse.id,
-                    sku: sku,
-                    quantity: quantity,
-                    cost_price: cost_price,
-                    last_updated: new Date().toISOString(),
-                };
-            }
-            return null;
-        }).filter(item => item !== null);
-
-        if (itemsToUpsert.length > 0) {
-            const { error: upsertError } = await supabaseAdmin
-                .from('supplier_stock_items')
-                .upsert(itemsToUpsert, { onConflict: 'warehouse_id, sku' });
-            if (upsertError) {
-                console.error(`Error al hacer upsert de stock para ${providerName}:`, upsertError.message);
-            } else {
-                console.log(`Stock y costos para ${providerName} actualizados con ${itemsToUpsert.length} artículos.`);
-            }
-        }
+    } catch (error) {
+        console.error('Error en la función dropbox-file-processor:', error.message);
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
     }
-
-    return new Response(JSON.stringify({ success: true, message: `Proceso completado.` }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-
-  } catch (error) {
-    console.error('Error en la función dropbox-file-processor:', error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
 });
