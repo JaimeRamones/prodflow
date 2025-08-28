@@ -1,11 +1,12 @@
+// --- VERSIÓN DE DIAGNÓSTICO FINAL ---
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
 
-// Pega aquí tus funciones auxiliares getRefreshedToken y updateMeliItem
-
+// --- Pega aquí tus funciones auxiliares getRefreshedToken y updateMeliItem ---
 async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseClient, userId: string) { /* ... tu código ... */ }
 async function updateMeliItem(listing: any, accessToken: string) { /* ... tu código ... */ }
+
 
 serve(async (_req) => {
   try {
@@ -19,7 +20,7 @@ serve(async (_req) => {
 
     for (const tokenData of allUserCredentials) {
       const userId = tokenData.user_id;
-      let accessToken = tokenData.access_token; // Añade la lógica de refrescar token si es necesario
+      let accessToken = tokenData.access_token; // Asume que es válido por simplicidad
       
       const { data: listings } = await supabaseAdmin
         .from('mercadolibre_listings')
@@ -30,11 +31,14 @@ serve(async (_req) => {
       if (!listings) continue;
 
       for (const listing of listings) {
-        // La magia sucede aquí: una sola llamada a la base de datos
+        
         const { data, error } = await supabaseAdmin.rpc('get_publishable_data_for_sku', {
           target_sku: listing.sku,
           target_user_id: userId,
         });
+
+        // --- LÍNEA DE DIAGNÓSTICO CLAVE ---
+        console.log(`[DIAGNÓSTICO] Para SKU ${listing.sku}, la BD respondió:`, JSON.stringify(data));
 
         if (error || !data || data.length === 0) {
           console.error(`Error calculando datos para SKU ${listing.sku}:`, error?.message);
@@ -47,7 +51,7 @@ serve(async (_req) => {
         const priceNeedsUpdate = publishable_price > 0 && Math.abs((listing.price || 0) - publishable_price) > 0.01;
 
         if (stockNeedsUpdate || priceNeedsUpdate) {
-          console.log(`Actualizando SKU "${listing.sku}" -> Stock: ${publishable_stock}, Precio: ${publishable_price}`);
+          console.log(`Actualizando SKU "${listing.sku}" -> Stock REAL ENVIADO: ${publishable_stock}, Precio: ${publishable_price}`);
           
           await updateMeliItem({
             meli_id: listing.meli_id,
@@ -60,7 +64,7 @@ serve(async (_req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, message: "Sync complete." }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
+    return new Response(JSON.stringify({ success: true, message: "Sync de diagnóstico completo." }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
   } catch (error) {
     console.error('Fatal error in sync function:', error.message);
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
