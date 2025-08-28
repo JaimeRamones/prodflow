@@ -102,23 +102,30 @@ serve(async (_req) => {
             const itemsToInsert = [];
 
             for (const line of lines) {
-                // --- CORRECCIÓN: Nueva expresión regular para leer solo SKU y Cantidad ---
-                const match = line.match(/^(.+?)\s+(\d+)/);
-                if (match) {
-                    const sku = match[1].trim();
-                    const quantity = parseInt(match[2], 10);
+                // --- CORRECCIÓN DEFINITIVA: Lógica de parseo robusta ---
+                const parts = line.trim().split(/\s+/).filter(part => part); // Divide por espacios y elimina vacíos
+                if (parts.length < 3) {
+                    console.warn(`Línea ignorada por formato incorrecto: "${line}"`);
+                    continue;
+                }
 
-                    if (sku && !isNaN(quantity)) {
-                        // --- CORRECCIÓN: Se quita el campo 'cost_price' que no existe en la tabla ---
-                        itemsToInsert.push({
-                            warehouse_id: warehouse.id,
-                            sku: sku,
-                            quantity: quantity,
-                            last_updated: new Date().toISOString(),
-                        });
-                    }
+                const priceStr = parts.pop()!; // El último elemento es el precio
+                const quantityStr = parts.pop()!; // El penúltimo es la cantidad
+                const sku = parts.join(' '); // Todo lo que queda es el SKU
+
+                const quantity = parseInt(quantityStr, 10);
+                const cost_price = parseFloat(priceStr.replace(',', '.'));
+
+                if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
+                    itemsToInsert.push({
+                        warehouse_id: warehouse.id,
+                        sku: sku,
+                        quantity: quantity,
+                        cost_price: cost_price,
+                        last_updated: new Date().toISOString(),
+                    });
                 } else {
-                    console.warn(`La línea no coincide con el formato esperado y fue ignorada: "${line}"`);
+                     console.warn(`Error al parsear la línea: "${line}"`);
                 }
             }
 
