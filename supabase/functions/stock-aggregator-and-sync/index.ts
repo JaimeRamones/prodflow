@@ -1,4 +1,4 @@
-// --- CÓDIGO FINAL Y CORREGIDO PARA stock-aggregator-and-sync ---
+// --- CÓDIGO FINAL Y DEFINITIVO para stock-aggregator-and-sync ---
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
@@ -84,7 +84,7 @@ serve(async (_req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    console.log("Iniciando el proceso de agregación y sincronización (Versión Final).");
+    console.log("Iniciando el proceso de agregación y sincronización (Versión Final Definitiva).");
 
     const { data: allUserCredentials, error: credsError } = await supabaseAdmin
       .from('meli_credentials')
@@ -135,11 +135,8 @@ serve(async (_req) => {
         let totalStock = 0;
         const sources: { cost: number; warehouse_id: string | number | null }[] = [];
 
-        // --- ÚNICO CAMBIO IMPORTANTE AQUÍ ---
         const { data: myProduct } = await supabaseAdmin
             .from('products')
-            // ANTES (con el join problemático): .select('stock_disponible, safety_stock, cost, supplier_id, warehouses(id)')
-            // AHORA (sin el join, más seguro):
             .select('stock_disponible, safety_stock, cost, supplier_id')
             .eq('sku', sku)
             .eq('user_id', userId)
@@ -151,8 +148,6 @@ serve(async (_req) => {
             totalStock += stockDisponible - safetyStock;
 
             if (myProduct.cost && myProduct.cost > 0) {
-                // Como ya no tenemos el join, no podemos obtener el warehouse_id aquí.
-                // Usamos 'null' como marcador de que es stock propio.
                 sources.push({ cost: myProduct.cost, warehouse_id: null });
             }
         }
@@ -183,7 +178,7 @@ serve(async (_req) => {
         let publishablePrice: number | undefined = undefined;
         if (sources.length > 0) {
           const bestSource = sources.reduce((prev, current) => (prev.cost < current.cost) ? prev : current);
-          const markupPercentage = supplierMarkupMap.get(bestSource.warehouse_id) ?? 0; // Para stock propio (warehouse_id: null), el markup será 0
+          const markupPercentage = supplierMarkupMap.get(bestSource.warehouse_id) ?? 0;
           const markup = 1 + (markupPercentage / 100);
           publishablePrice = parseFloat((bestSource.cost * markup).toFixed(2));
         }
