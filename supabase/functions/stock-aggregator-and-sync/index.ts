@@ -1,3 +1,4 @@
+// Versión 4.0 - Forzando actualización completa
 // --- CÓDIGO FINAL Y DEFINITIVO para stock-aggregator-and-sync ---
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
