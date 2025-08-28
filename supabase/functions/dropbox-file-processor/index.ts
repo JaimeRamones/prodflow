@@ -45,7 +45,6 @@ serve(async (_req) => {
 
         console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
-        // --- CORRECCIÓN: Se quita la columna 'user_id' que no existe ---
         const { data: warehouses, error: warehouseError } = await supabaseAdmin
             .from('warehouses')
             .select('id, name') 
@@ -100,22 +99,21 @@ serve(async (_req) => {
             const fileContent = await downloadResponse.text();
             const lines = fileContent.split('\n').filter(line => line.trim() !== '');
 
-            const itemsToUpsert = [];
+            const itemsToInsert = [];
 
             for (const line of lines) {
-                const match = line.match(/^(.+?)\s+(\d+)\s+([\d,.]+)$/);
+                // --- CORRECCIÓN: Nueva expresión regular para leer solo SKU y Cantidad ---
+                const match = line.match(/^(.+?)\s+(\d+)/);
                 if (match) {
                     const sku = match[1].trim();
                     const quantity = parseInt(match[2], 10);
-                    const cost = parseFloat(match[3].replace(',', '.'));
 
-                    if (sku && !isNaN(quantity) && !isNaN(cost)) {
-                        // --- CORRECCIÓN: Se quita el campo 'user_id' que no existe en la tabla ---
-                        itemsToUpsert.push({
+                    if (sku && !isNaN(quantity)) {
+                        // --- CORRECCIÓN: Se quita el campo 'cost_price' que no existe en la tabla ---
+                        itemsToInsert.push({
                             warehouse_id: warehouse.id,
                             sku: sku,
                             quantity: quantity,
-                            cost_price: cost, 
                             last_updated: new Date().toISOString(),
                         });
                     }
@@ -124,13 +122,13 @@ serve(async (_req) => {
                 }
             }
 
-            if (itemsToUpsert.length > 0) {
+            if (itemsToInsert.length > 0) {
                 await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
                 
-                const { error: upsertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToUpsert);
-                if (upsertError) throw upsertError;
+                const { error: insertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToInsert);
+                if (insertError) throw insertError;
 
-                console.log(`Se procesaron y guardaron ${itemsToUpsert.length} items para el archivo ${file.name}.`);
+                console.log(`Se procesaron y guardaron ${itemsToInsert.length} items para el archivo ${file.name}.`);
             }
         }
 
