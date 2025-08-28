@@ -102,16 +102,22 @@ serve(async (_req) => {
             const itemsToInsert = [];
 
             for (const line of lines) {
-                // --- CORRECCIÓN DEFINITIVA: Lógica de parseo robusta ---
-                const parts = line.trim().split(/\s+/).filter(part => part); // Divide por espacios y elimina vacíos
-                if (parts.length < 3) {
-                    console.warn(`Línea ignorada por formato incorrecto: "${line}"`);
-                    continue;
-                }
+                const trimmedLine = line.trim();
+                if (!trimmedLine) continue;
 
-                const priceStr = parts.pop()!; // El último elemento es el precio
-                const quantityStr = parts.pop()!; // El penúltimo es la cantidad
-                const sku = parts.join(' '); // Todo lo que queda es el SKU
+                // --- LÓGICA DE PARSEO DEFINITIVA ---
+                const lastSpaceIndex = trimmedLine.lastIndexOf(' ');
+                if (lastSpaceIndex === -1) continue;
+
+                const priceStr = trimmedLine.substring(lastSpaceIndex + 1);
+                const lineWithoutPrice = trimmedLine.substring(0, lastSpaceIndex).trim();
+                
+                const secondLastSpaceIndex = lineWithoutPrice.lastIndexOf(' ');
+                if (secondLastSpaceIndex === -1) continue;
+                
+                const quantityStr = lineWithoutPrice.substring(secondLastSpaceIndex + 1);
+                // El SKU es todo lo que está antes de la cantidad, conservando los espacios originales.
+                const sku = lineWithoutPrice.substring(0, secondLastSpaceIndex);
 
                 const quantity = parseInt(quantityStr, 10);
                 const cost_price = parseFloat(priceStr.replace(',', '.'));
