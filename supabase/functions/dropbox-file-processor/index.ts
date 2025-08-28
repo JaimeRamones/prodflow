@@ -45,9 +45,10 @@ serve(async (_req) => {
 
         console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
+        // --- CORRECCIÓN: Se quita la columna 'user_id' que no existe ---
         const { data: warehouses, error: warehouseError } = await supabaseAdmin
             .from('warehouses')
-            .select('id, name, user_id') 
+            .select('id, name') 
             .eq('type', 'proveedor');
         
         if (warehouseError) throw warehouseError;
@@ -109,12 +110,11 @@ serve(async (_req) => {
                     const cost = parseFloat(match[3].replace(',', '.'));
 
                     if (sku && !isNaN(quantity) && !isNaN(cost)) {
+                        // --- CORRECCIÓN: Se quita el campo 'user_id' que no existe en la tabla ---
                         itemsToUpsert.push({
-                            user_id: warehouse.user_id,
                             warehouse_id: warehouse.id,
                             sku: sku,
                             quantity: quantity,
-                            // --- CORRECCIÓN CLAVE: Usar el nombre de columna correcto ---
                             cost_price: cost, 
                             last_updated: new Date().toISOString(),
                         });
