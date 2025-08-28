@@ -45,6 +45,7 @@ serve(async (_req) => {
 
         console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
+        // --- CORRECCIÓN: Se busca la columna 'name' en lugar de 'file_name' ---
         const { data: warehouses, error: warehouseError } = await supabaseAdmin
             .from('warehouses')
             .select('id, name') 
@@ -75,6 +76,7 @@ serve(async (_req) => {
         }
 
         for (const file of stockFileEntries) {
+            // --- CORRECCIÓN: Se compara el nombre del archivo con la columna 'name' del almacén ---
             const providerName = file.name.replace(/\.(txt|csv)$/i, '');
             const warehouse = warehouses.find(w => w.name.toLowerCase() === providerName.toLowerCase());
 
@@ -102,44 +104,32 @@ serve(async (_req) => {
             const itemsToInsert = [];
 
             for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine) continue;
+                // Se mantiene la lógica de parseo robusta para SKUs con espacios
+                const match = line.match(/^(.+?)\s+(\d+)\s+([\d,.]+)$/);
+                if (match) {
+                    const sku = match[1].trim();
+                    const quantity = parseInt(match[2], 10);
+                    const cost = parseFloat(match[3].replace(',', '.'));
 
-                // --- LÓGICA DE PARSEO DEFINITIVA ---
-                const lastSpaceIndex = trimmedLine.lastIndexOf(' ');
-                if (lastSpaceIndex === -1) continue;
-
-                const priceStr = trimmedLine.substring(lastSpaceIndex + 1);
-                const lineWithoutPrice = trimmedLine.substring(0, lastSpaceIndex).trim();
-                
-                const secondLastSpaceIndex = lineWithoutPrice.lastIndexOf(' ');
-                if (secondLastSpaceIndex === -1) continue;
-                
-                const quantityStr = lineWithoutPrice.substring(secondLastSpaceIndex + 1);
-                // El SKU es todo lo que está antes de la cantidad, conservando los espacios originales.
-                const sku = lineWithoutPrice.substring(0, secondLastSpaceIndex);
-
-                const quantity = parseInt(quantityStr, 10);
-                const cost_price = parseFloat(priceStr.replace(',', '.'));
-
-                if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
-                    itemsToInsert.push({
-                        warehouse_id: warehouse.id,
-                        sku: sku,
-                        quantity: quantity,
-                        cost_price: cost_price,
-                        last_updated: new Date().toISOString(),
-                    });
+                    if (sku && !isNaN(quantity) && !isNaN(cost)) {
+                        itemsToInsert.push({
+                            warehouse_id: warehouse.id,
+                            sku: sku,
+                            quantity: quantity,
+                            cost_price: cost, // Asegúrate que la columna se llame 'cost_price'
+                            last_updated: new Date().toISOString(),
+                        });
+                    }
                 } else {
-                     console.warn(`Error al parsear la línea: "${line}"`);
+                    console.warn(`La línea no coincide con el formato esperado y fue ignorada: "${line}"`);
                 }
             }
 
             if (itemsToInsert.length > 0) {
                 await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
                 
-                const { error: insertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToInsert);
-                if (insertError) throw insertError;
+                const { error: upsertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToInsert);
+                if (upsertError) throw upsertError;
 
                 console.log(`Se procesaron y guardaron ${itemsToInsert.length} items para el archivo ${file.name}.`);
             }
