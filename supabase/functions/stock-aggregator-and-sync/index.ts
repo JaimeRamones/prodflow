@@ -110,15 +110,14 @@ serve(async (_req) => {
         accessToken = await getRefreshedToken(tokenData.refresh_token, supabaseAdmin, userId);
       }
       
-      // --- CORRECCIÓN: Obtener TODOS los proveedores y sus recargos de una vez ---
       const { data: suppliers } = await supabaseAdmin
         .from('suppliers')
-        .select('id, markup')
+        .select('id, markup, warehouse_id') // Obtenemos también el warehouse_id
         .eq('user_id', userId);
 
-      const supplierMarkupMap = new Map(suppliers?.map(s => [s.id, s.markup]));
+      const supplierMarkupMap = new Map(suppliers?.map(s => [s.warehouse_id, s.markup]));
 
-      const { data: productSkus } = await supabaseAdmin.from('products').select('sku, supplier_id').eq('user_id', userId);
+      const { data: productSkus } = await supabaseAdmin.from('products').select('sku').eq('user_id', userId);
       const { data: supplierSkus } = await supabaseAdmin.from('supplier_stock_items').select('sku').eq('user_id', userId);
       
       const allSkus = [...new Set([
@@ -130,33 +129,40 @@ serve(async (_req) => {
 
       for (const sku of allSkus) {
         let totalStock = 0;
-        const costs: number[] = [];
+        const sources: { cost: number; warehouse_id: string | null }[] = [];
 
-        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock, cost, supplier_id').eq('sku', sku).eq('user_id', userId).single();
+        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock, cost, supplier_id, warehouses!inner(id)').eq('sku', sku).eq('user_id', userId).single();
         if (myProduct) {
           totalStock += (myProduct.stock_disponible || 0) - (myProduct.safety_stock || 0);
-          if (myProduct.cost) costs.push(myProduct.cost);
+          if (myProduct.cost) {
+            // Asumimos que el warehouse del producto propio tiene un ID conocido o se puede obtener
+            sources.push({ cost: myProduct.cost, warehouse_id: myProduct.warehouses?.id || null });
+          }
         }
 
-        const { data: supplierItems } = await supabaseAdmin.from('supplier_stock_items').select('quantity, cost, warehouses (safety_stock)').eq('sku', sku).eq('user_id', userId);
+        const { data: supplierItems } = await supabaseAdmin.from('supplier_stock_items').select('quantity, cost, warehouse_id, warehouses (safety_stock)').eq('sku', sku).eq('user_id', userId);
         
         if (supplierItems) {
           for (const item of supplierItems) {
             const warehouseData = Array.isArray(item.warehouses) ? item.warehouses[0] : item.warehouses;
             totalStock += (item.quantity || 0) - (warehouseData?.safety_stock || 0);
-            if (item.cost) costs.push(item.cost);
+            if (item.cost) {
+              sources.push({ cost: item.cost, warehouse_id: item.warehouse_id });
+            }
           }
         }
 
         const publishableStock = Math.max(0, totalStock);
         
-        // --- CORRECCIÓN: Calcular el precio basado en el costo mínimo Y el recargo del proveedor del producto ---
         let publishablePrice: number | undefined = undefined;
-        if (costs.length > 0 && myProduct?.supplier_id) {
-          const minCost = Math.min(...costs);
-          const markupPercentage = supplierMarkupMap.get(myProduct.supplier_id) || 0;
+        if (sources.length > 0) {
+          // Encontrar la fuente con el costo más bajo
+          const bestSource = sources.reduce((prev, current) => (prev.cost < current.cost) ? prev : current);
+          
+          // Obtener el recargo para el almacén de la mejor fuente
+          const markupPercentage = supplierMarkupMap.get(bestSource.warehouse_id) || 0;
           const markup = 1 + (markupPercentage / 100);
-          publishablePrice = parseFloat((minCost * markup).toFixed(2));
+          publishablePrice = parseFloat((bestSource.cost * markup).toFixed(2));
         }
         
         const { data: listingsToUpdate } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, meli_variation_id, available_quantity, status, price').eq('sku', sku).eq('user_id', userId);
@@ -169,7 +175,7 @@ serve(async (_req) => {
           const statusNeedsUpdate = (publishableStock > 0 && listing.status !== 'active') || (publishableStock === 0 && listing.status !== 'paused');
 
           if (stockNeedsUpdate || priceNeedsUpdate || statusNeedsUpdate) {
-            console.log(`Actualizando SKU ${sku} (Pub ID: ${listing.meli_id}) -> Stock: ${publishableStock}, Precio: ${publishablePrice}`);
+            console.log(`Actualizando SKU "${sku}" (Pub ID: ${listing.meli_id}) -> Stock: ${publishableStock}, Precio: ${publishablePrice}`);
             
             await updateMeliItem({
               meli_id: listing.meli_id,
