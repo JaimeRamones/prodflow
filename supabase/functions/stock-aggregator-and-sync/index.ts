@@ -33,8 +33,6 @@ async function updateMeliItem(listing: any, accessToken: string) {
     let url: string;
     let payload: any;
 
-    // --- INICIO DE LA CORRECCIÓN ---
-    // Se construye el payload dinámicamente para incluir el precio
     if (listing.meli_variation_id) {
       url = `https://api.mercadolibre.com/items/${listing.meli_id}/variations`;
       const variationPayload: { id: any; available_quantity: any; price?: number } = {
@@ -59,7 +57,6 @@ async function updateMeliItem(listing: any, accessToken: string) {
       }
       payload = dynamicPayload;
     }
-    // --- FIN DE LA CORRECCIÓN ---
 
     const response = await fetch(url, {
       method: 'PUT',
@@ -113,7 +110,15 @@ serve(async (_req) => {
         accessToken = await getRefreshedToken(tokenData.refresh_token, supabaseAdmin, userId);
       }
       
-      const { data: productSkus } = await supabaseAdmin.from('products').select('sku').eq('user_id', userId);
+      // --- CORRECCIÓN: Obtener TODOS los proveedores y sus recargos de una vez ---
+      const { data: suppliers } = await supabaseAdmin
+        .from('suppliers')
+        .select('id, markup')
+        .eq('user_id', userId);
+
+      const supplierMarkupMap = new Map(suppliers?.map(s => [s.id, s.markup]));
+
+      const { data: productSkus } = await supabaseAdmin.from('products').select('sku, supplier_id').eq('user_id', userId);
       const { data: supplierSkus } = await supabaseAdmin.from('supplier_stock_items').select('sku').eq('user_id', userId);
       
       const allSkus = [...new Set([
@@ -125,32 +130,40 @@ serve(async (_req) => {
 
       for (const sku of allSkus) {
         let totalStock = 0;
-        
-        // --- CORRECCIÓN: Obtener también el precio de venta ---
-        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock, sale_price').eq('sku', sku).eq('user_id', userId).single();
+        const costs: number[] = [];
+
+        const { data: myProduct } = await supabaseAdmin.from('products').select('stock_disponible, safety_stock, cost, supplier_id').eq('sku', sku).eq('user_id', userId).single();
         if (myProduct) {
           totalStock += (myProduct.stock_disponible || 0) - (myProduct.safety_stock || 0);
+          if (myProduct.cost) costs.push(myProduct.cost);
         }
 
-        const { data: supplierItems } = await supabaseAdmin.from('supplier_stock_items').select('quantity, warehouses (safety_stock)').eq('sku', sku).eq('user_id', userId);
+        const { data: supplierItems } = await supabaseAdmin.from('supplier_stock_items').select('quantity, cost, warehouses (safety_stock)').eq('sku', sku).eq('user_id', userId);
         
         if (supplierItems) {
           for (const item of supplierItems) {
             const warehouseData = Array.isArray(item.warehouses) ? item.warehouses[0] : item.warehouses;
             totalStock += (item.quantity || 0) - (warehouseData?.safety_stock || 0);
+            if (item.cost) costs.push(item.cost);
           }
         }
 
         const publishableStock = Math.max(0, totalStock);
-        const publishablePrice = myProduct?.sale_price; // Usamos el precio de nuestro producto
         
-        // --- CORRECCIÓN: Obtener también el precio de la publicación ---
+        // --- CORRECCIÓN: Calcular el precio basado en el costo mínimo Y el recargo del proveedor del producto ---
+        let publishablePrice: number | undefined = undefined;
+        if (costs.length > 0 && myProduct?.supplier_id) {
+          const minCost = Math.min(...costs);
+          const markupPercentage = supplierMarkupMap.get(myProduct.supplier_id) || 0;
+          const markup = 1 + (markupPercentage / 100);
+          publishablePrice = parseFloat((minCost * markup).toFixed(2));
+        }
+        
         const { data: listingsToUpdate } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, meli_variation_id, available_quantity, status, price').eq('sku', sku).eq('user_id', userId);
         
         if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
 
         for (const listing of listingsToUpdate) {
-          // --- CORRECCIÓN: Comprobar si el precio también necesita actualizarse ---
           const stockNeedsUpdate = listing.available_quantity !== publishableStock;
           const priceNeedsUpdate = publishablePrice !== undefined && listing.price !== publishablePrice;
           const statusNeedsUpdate = (publishableStock > 0 && listing.status !== 'active') || (publishableStock === 0 && listing.status !== 'paused');
