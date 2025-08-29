@@ -16,35 +16,50 @@ serve(async (req) => {
     const { publication, newPrice, newSku } = await req.json();
     const { meli_id, meli_variation_id } = publication;
     
-    // Obtener las credenciales del usuario de la base de datos
     const { data: userCredentials, error: credError } = await supabaseAdmin
       .from('meli_credentials')
       .select('access_token, user_id')
-      .limit(1).single(); // Asumimos una sola credencial por ahora
+      .limit(1).single();
     if (credError) throw credError;
     
     const accessToken = userCredentials.access_token;
-    const userId = userCredentials.user_id;
 
+    // --- INICIA LA NUEVA LÓGICA ---
+
+    // 1. LEER el estado actual de la publicación desde Mercado Libre
+    const getItemResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!getItemResponse.ok) throw new Error('No se pudo obtener la publicación de Mercado Libre.');
+    const currentItem = await getItemResponse.json();
+
+    // 2. MODIFICAR los datos en memoria
     let body;
-    // La API de ML requiere un formato diferente si la publicación tiene variaciones
-    if (meli_variation_id) {
-      body = {
-        variations: [{
-          id: meli_variation_id,
-          price: newPrice,
-          seller_custom_field: newSku
-        }]
-      };
+    if (meli_variation_id && currentItem.variations && currentItem.variations.length > 0) {
+      // Es una publicación con variaciones
+      const updatedVariations = currentItem.variations.map(variation => {
+        if (variation.id === meli_variation_id) {
+          // Esta es la variación que queremos cambiar
+          return {
+            ...variation, // Mantenemos todos los datos existentes de la variación
+            price: newPrice,
+            seller_custom_field: newSku
+          };
+        }
+        return variation; // Devolvemos las otras variaciones sin cambios
+      });
+      body = { variations: updatedVariations };
+
     } else {
+      // Es una publicación simple, sin variaciones
       body = {
         price: newPrice,
         seller_custom_field: newSku
       };
     }
     
-    // 1. Llamada a la API de Mercado Libre para actualizar
-    const response = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
+    // 3. ENVIAR la estructura completa y actualizada de vuelta a Mercado Libre
+    const updateResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -53,18 +68,19 @@ serve(async (req) => {
       body: JSON.stringify(body)
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      console.error('ML API Error:', JSON.stringify(errorData, null, 2));
       throw new Error(`Error de Mercado Libre: ${errorData.message}`);
     }
 
-    // 2. Actualizar nuestra base de datos local para mantener la consistencia
-    const updateData = { price: newPrice, sku: newSku };
-    let query = supabaseAdmin.from('mercadolibre_listings').update(updateData).eq('meli_id', meli_id);
-    if (meli_variation_id) {
-      query = query.eq('meli_variation_id', meli_variation_id);
-    }
-    const { error: dbError } = await query;
+    // 4. Actualizar nuestra base de datos local para mantener la consistencia
+    const { error: dbError } = await supabaseAdmin
+      .from('mercadolibre_listings')
+      .update({ price: newPrice, sku: newSku })
+      .eq('meli_id', meli_id)
+      .eq('meli_variation_id', meli_variation_id); // Aseguramos actualizar la variación correcta
+      
     if (dbError) throw dbError;
 
     return new Response(JSON.stringify({ success: true }), {
