@@ -3,11 +3,11 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
-import ImageZoomModal from './ImageZoomModal'; // 1. IMPORTAMOS EL NUEVO COMPONENTE
+import ImageZoomModal from './ImageZoomModal';
 
 const ITEMS_PER_PAGE = 20;
 
-// Pequeños componentes para dar estilo a los estados (sin cambios)
+// Componente para el estado de la publicación
 const StatusPill = ({ status }) => {
     const styles = {
         active: 'bg-green-500 text-green-100',
@@ -24,6 +24,7 @@ const StatusPill = ({ status }) => {
     return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${styles[status] || styles.closed}`}>{text[status] || status}</span>;
 };
 
+// Componente para el tipo de publicación
 const ListingTypePill = ({ type }) => {
     const styles = {
         gold_special: 'bg-yellow-600 text-white',
@@ -38,7 +39,6 @@ const ListingTypePill = ({ type }) => {
     return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${styles[type] || styles.free}`}>{text[type] || type}</span>;
 };
 
-
 const PublicationsView = () => {
     const { products } = useContext(AppContext);
     const [publications, setPublications] = useState([]);
@@ -49,8 +49,6 @@ const PublicationsView = () => {
     const [statusFilter, setStatusFilter] = useState('');
     const [typeFilter, setTypeFilter] = useState('');
     const [sortBy, setSortBy] = useState('title');
-    
-    // 2. AÑADIMOS EL ESTADO PARA LA IMAGEN AMPLIADA
     const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
 
     useEffect(() => {
@@ -67,22 +65,18 @@ const PublicationsView = () => {
                 const cleanedSearchTerm = searchTerm.trim().replace(/%/g, '');
                 query = query.or(`title.ilike.%${cleanedSearchTerm}%,sku.ilike.%${cleanedSearchTerm}%,meli_id.ilike.%${cleanedSearchTerm}%`);
             }
-
             if (statusFilter) {
                 query = query.eq('status', statusFilter);
             }
-
             if (typeFilter) {
                 query = query.eq('listing_type_id', typeFilter);
             }
-            
             if (sortBy === 'sold_quantity') {
                 query = query.order('sold_quantity', { ascending: false, nullsFirst: false });
             } else {
                 query = query.order('title', { ascending: true });
             }
 
-            // Asumo que la columna 'pictures' existe con la URL grande. Si no, ajusta esta línea.
             const { data, error, count: queryCount } = await query.range(from, to);
             
             if (error) {
@@ -124,7 +118,6 @@ const PublicationsView = () => {
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Estado</label>
@@ -172,29 +165,20 @@ const PublicationsView = () => {
                     <div className="divide-y divide-gray-700">
                         {publications.length > 0 ? publications.map(pub => (
                             <div key={`${pub.meli_id}-${pub.meli_variation_id}`} className="flex items-center p-4 space-x-4">
-                          
-                                  
-                        {pub.thumbnail_url ? (
-                       <img 
-        src={pub.thumbnail_url} 
-        alt={pub.title} 
-        // El estilo de cursor y el efecto hover solo se aplican si se puede hacer zoom
-        className={`w-16 h-16 object-cover rounded-md flex-shrink-0 ${pub.pictures && pub.pictures.length > 0 ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-        // La función onClick solo se ejecuta si existen los datos para el zoom
-        onClick={() => {
-            if (pub.pictures && pub.pictures.length > 0) {
-                setZoomedImageUrl(pub.pictures[0].url);
-            }
-        }}
-    />
-) : (
-    <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-500">Sin img</div>
-)}
-    />
-) : (
-    <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-500">Sin img</div>
-)}
-                                
+                                {pub.thumbnail_url ? (
+                                    <img 
+                                        src={pub.thumbnail_url} 
+                                        alt={pub.title} 
+                                        className={`w-16 h-16 object-cover rounded-md flex-shrink-0 ${pub.pictures && pub.pictures.length > 0 ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                                        onClick={() => {
+                                            if (pub.pictures && pub.pictures.length > 0) {
+                                                setZoomedImageUrl(pub.pictures[0].url);
+                                            }
+                                        }}
+                                    />
+                                ) : (
+                                    <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-500">Sin img</div>
+                                )}
                                 <div className="flex-grow">
                                     <a href={pub.permalink} target="_blank" rel="noopener noreferrer" className="text-white font-semibold hover:underline">{pub.title}</a>
                                     <p className="text-xs text-gray-500 font-mono">ID: {pub.meli_id}</p>
@@ -235,7 +219,6 @@ const PublicationsView = () => {
                 </div>
             </div>
 
-            {/* 4. RENDERIZAMOS EL MODAL */}
             <ImageZoomModal 
                 imageUrl={zoomedImageUrl} 
                 onClose={() => setZoomedImageUrl(null)} 
