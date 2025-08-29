@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
+import ImageZoomModal from './ImageZoomModal'; // 1. IMPORTAMOS EL NUEVO COMPONENTE
 
 const ITEMS_PER_PAGE = 20;
 
@@ -45,13 +46,13 @@ const PublicationsView = () => {
     const [page, setPage] = useState(0);
     const [count, setCount] = useState(0);
     const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const [typeFilter, setTypeFilter] = useState('');
+    const [sortBy, setSortBy] = useState('title');
+    
+    // 2. AÑADIMOS EL ESTADO PARA LA IMAGEN AMPLIADA
+    const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
 
-    // --- PASO 1: AÑADIR NUEVOS ESTADOS PARA FILTROS Y ORDEN ---
-    const [statusFilter, setStatusFilter] = useState(''); // 'active', 'paused', 'closed'
-    const [typeFilter, setTypeFilter] = useState('');   // 'gold_special', 'gold_pro'
-    const [sortBy, setSortBy] = useState('title');      // 'title', 'sold_quantity'
-
-    // --- PASO 2: MODIFICAR EL useEffect PARA INCLUIR LOS NUEVOS FILTROS ---
     useEffect(() => {
         const fetchPublications = async () => {
             setIsLoading(true);
@@ -62,31 +63,26 @@ const PublicationsView = () => {
                 .from('mercadolibre_listings')
                 .select('*', { count: 'exact' });
 
-            // Filtro de búsqueda de texto
             if (searchTerm.trim()) {
                 const cleanedSearchTerm = searchTerm.trim().replace(/%/g, '');
                 query = query.or(`title.ilike.%${cleanedSearchTerm}%,sku.ilike.%${cleanedSearchTerm}%,meli_id.ilike.%${cleanedSearchTerm}%`);
             }
 
-            // Filtro por estado (activas, pausadas, etc.)
             if (statusFilter) {
                 query = query.eq('status', statusFilter);
             }
 
-            // Filtro por tipo de publicación (premium, clásica)
             if (typeFilter) {
                 query = query.eq('listing_type_id', typeFilter);
             }
             
-            // Lógica de ordenamiento
             if (sortBy === 'sold_quantity') {
-                // Ordena por más vendidos, poniendo los que no tienen ventas al final
                 query = query.order('sold_quantity', { ascending: false, nullsFirst: false });
             } else {
-                // Ordenamiento por defecto por título
                 query = query.order('title', { ascending: true });
             }
 
+            // Asumo que la columna 'pictures' existe con la URL grande. Si no, ajusta esta línea.
             const { data, error, count: queryCount } = await query.range(from, to);
             
             if (error) {
@@ -108,9 +104,8 @@ const PublicationsView = () => {
         }, 300);
 
         return () => clearTimeout(debounceTimeout);
-    }, [page, products, searchTerm, statusFilter, typeFilter, sortBy]); // Se añaden los nuevos filtros a las dependencias
+    }, [page, products, searchTerm, statusFilter, typeFilter, sortBy]);
 
-    // --- PASO 3: RESETEAR LA PÁGINA CUANDO CAMBIAN LOS FILTROS O LA BÚSQUEDA ---
     useEffect(() => {
         setPage(0);
     }, [searchTerm, statusFilter, typeFilter, sortBy]);
@@ -121,7 +116,6 @@ const PublicationsView = () => {
         <div>
             <h2 className="text-3xl font-bold text-white mb-6">Publicaciones de Mercado Libre</h2>
             
-            {/* --- PASO 4: NUEVA SECCIÓN DE BÚSQUEDA Y FILTROS --- */}
             <div className="mb-6 p-4 bg-gray-900/50 rounded-lg space-y-4">
                 <input
                     type="text"
@@ -132,7 +126,6 @@ const PublicationsView = () => {
                 />
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* Filtro de Estado */}
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Estado</label>
                         <select
@@ -146,8 +139,6 @@ const PublicationsView = () => {
                             <option value="closed">Inactivas/Finalizadas</option>
                         </select>
                     </div>
-
-                    {/* Filtro de Tipo */}
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Tipo de Publicación</label>
                         <select
@@ -160,8 +151,6 @@ const PublicationsView = () => {
                             <option value="gold_pro">Clásica</option>
                         </select>
                     </div>
-
-                    {/* Ordenamiento */}
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Ordenar por</label>
                         <select
@@ -183,7 +172,18 @@ const PublicationsView = () => {
                     <div className="divide-y divide-gray-700">
                         {publications.length > 0 ? publications.map(pub => (
                             <div key={`${pub.meli_id}-${pub.meli_variation_id}`} className="flex items-center p-4 space-x-4">
-                                <img src={pub.thumbnail_url} alt={pub.title} className="w-16 h-16 object-cover rounded-md flex-shrink-0" />
+                                
+                                {/* 3. HACEMOS LA IMAGEN CLICKEABLE */}
+                                {pub.pictures && pub.pictures.length > 0 ? (
+                                    <img 
+                                        src={pub.thumbnail_url} 
+                                        alt={pub.title} 
+                                        className="w-16 h-16 object-cover rounded-md flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                        onClick={() => setZoomedImageUrl(pub.pictures[0].url)}
+                                    />
+                                ) : (
+                                    <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-500">Sin img</div>
+                                )}
                                 
                                 <div className="flex-grow">
                                     <a href={pub.permalink} target="_blank" rel="noopener noreferrer" className="text-white font-semibold hover:underline">{pub.title}</a>
@@ -206,7 +206,6 @@ const PublicationsView = () => {
                         )}
                     </div>
                 )}
-                 {/* Controles de Paginación (sin cambios) */}
                 <div className="flex justify-between items-center p-4 border-t border-gray-700">
                     <button 
                         onClick={() => setPage(p => Math.max(0, p - 1))} 
@@ -225,6 +224,12 @@ const PublicationsView = () => {
                     </button>
                 </div>
             </div>
+
+            {/* 4. RENDERIZAMOS EL MODAL */}
+            <ImageZoomModal 
+                imageUrl={zoomedImageUrl} 
+                onClose={() => setZoomedImageUrl(null)} 
+            />
         </div>
     );
 };
