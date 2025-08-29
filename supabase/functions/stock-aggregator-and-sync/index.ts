@@ -97,10 +97,15 @@ serve(async (_req) => {
             payload.available_quantity = publishableStock;
             needsUpdate = true;
         }
+
+        // --- INICIO DE LA CORRECCIÓN ---
+        // Añadimos la lógica para verificar y agregar el precio a la actualización
         if (newSalePrice && Math.abs(listing.price - newSalePrice) > 0.01) {
             payload.price = newSalePrice;
             needsUpdate = true;
         }
+        // --- FIN DE LA CORRECCIÓN ---
+
         const newStatus = publishableStock > 0 ? 'active' : 'paused';
         if (listing.status !== newStatus) {
             payload.status = newStatus;
