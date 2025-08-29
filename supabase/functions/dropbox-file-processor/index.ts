@@ -63,7 +63,7 @@ serve(async (_req) => {
         const supplierHeaderConfig = {
             'rodamitre': { // Ejemplo del caso anterior, puedes borrarlo si no lo usas
                 sku: 'cod. art.',
-                price: 'p neto + iva',
+                price: 'neto + iva',
                 stock: 'stock 1'
             },
             'ventor': {
