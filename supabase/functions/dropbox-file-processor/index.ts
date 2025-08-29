@@ -35,7 +35,6 @@ async function getDropboxAccessToken() {
     return data.access_token;
 }
 
-
 serve(async (_req) => {
     try {
         const supabaseAdmin = createClient(
@@ -59,6 +58,35 @@ serve(async (_req) => {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
             });
         }
+
+        // --- CONFIGURACIÓN DE CABECERAS PARA PROVEEDORES DE EXCEL ---
+        const supplierHeaderConfig = {
+            'rodamitre': { // Ejemplo del caso anterior, puedes borrarlo si no lo usas
+                sku: 'cod. art.',
+                price: 'p neto + iva',
+                stock: 'stock 1'
+            },
+            'ventor': {
+                sku: 'código',
+                price: 'precio',
+                stock: 'stock'
+            },
+            'iden': { // Nuevo proveedor con la misma config de Ventor
+                sku: 'código',
+                price: 'precio',
+                stock: 'stock'
+            },
+            'iturria': { // Nuevo proveedor con la misma config de Ventor
+                sku: 'código',
+                price: 'precio',
+                stock: 'stock'
+            },
+            'rodamientos_brothers': { // Nuevo proveedor con la misma config de Ventor
+                sku: 'código',
+                price: 'precio',
+                stock: 'stock'
+            }
+        };
 
         const listFilesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
             method: 'POST',
@@ -100,30 +128,33 @@ serve(async (_req) => {
             }
 
             const itemsToInsert = [];
+            const fileNameLower = file.name.toLowerCase();
 
-            if (file.name.toLowerCase().endsWith('.xlsx')) {
-                const fileBuffer = await downloadResponse.arrayBuffer();
-                const workbook = xlsx.read(new Uint8Array(fileBuffer), { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const jsonData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-
-                if (jsonData.length < 2) {
-                    console.warn(`Archivo Excel '${file.name}' está vacío o no tiene datos.`);
+            if (fileNameLower.endsWith('.xlsx')) {
+                const providerConfig = supplierHeaderConfig[providerName.toLowerCase()];
+                if (!providerConfig) {
+                    console.log(`Archivo Excel '${file.name}' ignorado: no hay configuración de cabeceras para este proveedor.`);
                     continue;
                 }
 
-                const headers = jsonData[0] as string[];
-                const dataRows = jsonData.slice(1);
-                
-                const headerMap = {
-                    sku: headers.findIndex(h => h.toLowerCase().includes('cod. art.')),
-                    price: headers.findIndex(h => h.toLowerCase().includes('p neto + iva')),
-                    stock: headers.findIndex(h => h.toLowerCase().includes('stock 1'))
-                };
+                const fileBuffer = await downloadResponse.arrayBuffer();
+                const workbook = xlsx.read(new Uint8Array(fileBuffer), { type: 'array' });
+                const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
-                if (headerMap.sku === -1 || headerMap.price === -1 || headerMap.stock === -1) {
-                    console.error(`Archivo Excel '${file.name}' ignorado. Faltan cabeceras requeridas: 'Cod. Art.', 'P Neto + IVA', 'Stock 1'.`);
+                if (jsonData.length < 2) continue;
+
+                const headers = (jsonData[0] as string[]).map(h => h.toLowerCase().trim());
+                const dataRows = jsonData.slice(1);
+
+                const headerMap = {
+                    sku: headers.findIndex(h => h.includes(providerConfig.sku)),
+                    price: headers.findIndex(h => h.includes(providerConfig.price)),
+                    stock: headers.findIndex(h => h.includes(providerConfig.stock))
+                };
+                
+                if (Object.values(headerMap).some(index => index === -1)) {
+                    console.error(`Archivo '${file.name}' ignorado. No se encontraron todas las cabeceras requeridas para ${providerName}.`);
                     continue;
                 }
 
@@ -135,36 +166,32 @@ serve(async (_req) => {
                     if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
                         itemsToInsert.push({
                             warehouse_id: warehouse.id,
-                            sku,
-                            quantity,
-                            cost_price,
+                            sku, quantity, cost_price,
                             last_updated: new Date().toISOString(),
                         });
                     }
                 }
-            } else {
+
+            } else { // Lógica para .txt y .csv (Rodamet)
                 const fileContent = await downloadResponse.text();
                 const lines = fileContent.split(/\r?\n/);
-
                 for (const line of lines) {
                     if (line.trim() === '') continue;
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length < 3) continue;
-                    
+                    const parts = line.split('\t');
+                    if (parts.length < 3) {
+                        console.warn(`Formato inválido (No hay 3 campos separados por tabulador): "${line}"`);
+                        continue;
+                    }
                     const priceStr = parts[parts.length - 1];
                     const quantityStr = parts[parts.length - 2];
                     const sku = parts.slice(0, parts.length - 2).join(' ');
                     if (!sku) continue;
-
                     const quantity = parseInt(quantityStr, 10);
                     const cost_price = parseFloat(priceStr.replace(',', '.'));
-
                     if (!isNaN(quantity) && !isNaN(cost_price)) {
                         itemsToInsert.push({
                             warehouse_id: warehouse.id,
-                            sku,
-                            quantity,
-                            cost_price,
+                            sku, quantity, cost_price,
                             last_updated: new Date().toISOString(),
                         });
                     }
