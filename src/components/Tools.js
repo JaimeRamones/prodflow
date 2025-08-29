@@ -1,8 +1,9 @@
-import React, { useState, useContext, useMemo } from 'react';
+// Ruta: src/components/Tools.js
+import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 
-// --- HERRAMIENTA 1: GESTOR DE PROVEEDORES ---
+// --- HERRAMIENTA 1: GESTOR DE PROVEEDORES (SIN CAMBIOS) ---
 const SuppliersManager = () => {
     const { showMessage, suppliers, fetchSuppliers, products, fetchProducts } = useContext(AppContext);
     const [supplierName, setSupplierName] = useState('');
@@ -59,7 +60,6 @@ const SuppliersManager = () => {
         }
     };
     
-    // --- FUNCIÓN CORREGIDA ---
     const handleApplyRuleToProducts = async (supplier) => {
         const productsToUpdate = products.filter(p => p.supplier_id === supplier.id);
         if (productsToUpdate.length === 0) {
@@ -72,8 +72,6 @@ const SuppliersManager = () => {
         setIsApplying(true);
         try {
             const markup = 1 + (supplier.markup / 100);
-
-            // Creamos un array de promesas, una por cada producto a actualizar
             const updatePromises = productsToUpdate.map(product => {
                 const newSalePrice = (product.cost_price || 0) * markup;
                 return supabase
@@ -81,19 +79,13 @@ const SuppliersManager = () => {
                     .update({ sale_price: parseFloat(newSalePrice.toFixed(2)) })
                     .eq('id', product.id);
             });
-
-            // Ejecutamos todas las actualizaciones en paralelo
             const results = await Promise.all(updatePromises);
-
-            // Verificamos si alguna de las actualizaciones falló
             const firstError = results.find(res => res.error);
             if (firstError) {
                 throw firstError.error;
             }
-
             showMessage(`Precios actualizados para ${productsToUpdate.length} productos.`, "success");
-            await fetchProducts(); // Refrescamos la lista de productos en la app
-
+            await fetchProducts();
         } catch (error) {
             showMessage(`Error al aplicar la regla: ${error.message}`, "error");
         } finally {
@@ -119,7 +111,7 @@ const SuppliersManager = () => {
     );
 };
 
-// --- HERRAMIENTA 2: GESTOR DE RUBROS Y SUBRUBROS ---
+// --- HERRAMIENTA 2: GESTOR DE RUBROS Y SUBRUBROS (SIN CAMBIOS) ---
 const CategoriesManager = () => {
     const { showMessage, categories, fetchCategories } = useContext(AppContext);
     const [newRubro, setNewRubro] = useState('');
@@ -167,7 +159,7 @@ const CategoriesManager = () => {
     );
 };
 
-// --- HERRAMIENTA 3: ACTUALIZACIÓN MASIVA DE COSTOS ---
+// --- HERRAMIENTA 3: ACTUALIZACIÓN MASIVA DE COSTOS (SIN CAMBIOS) ---
 const BulkPriceUpdater = () => {
     const { products, suppliers, categories, showMessage, fetchProducts } = useContext(AppContext);
     const [selectedBrand, setSelectedBrand] = useState('');
@@ -218,7 +210,7 @@ const BulkPriceUpdater = () => {
     };
 
     return (
-        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md">
+        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md mb-8">
             <h3 className="text-xl font-semibold text-white mb-4">3. Actualización Masiva de Precios de Costo</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-gray-700 pb-4 mb-4">
                 <div><label className="block text-sm font-medium text-gray-300 mb-1">Filtrar por Marca</label><select value={selectedBrand} onChange={e => setSelectedBrand(e.target.value)} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"><option value="">Todas</option>{uniqueBrands.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
@@ -230,6 +222,119 @@ const BulkPriceUpdater = () => {
     );
 };
 
+// --- INICIO DEL NUEVO CÓDIGO ---
+
+// --- HERRAMIENTA 4: MOTOR DE REGLAS DE NEGOCIO ---
+const RulesManager = () => {
+    const { showMessage } = useContext(AppContext);
+    const [rules, setRules] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        const fetchRules = async () => {
+            setIsLoading(true);
+            const { data, error } = await supabase
+                .from('business_rules')
+                .select('*')
+                .order('id');
+            if (error) {
+                showMessage(`Error al cargar las reglas: ${error.message}`, 'error');
+            } else {
+                setRules(data);
+            }
+            setIsLoading(false);
+        };
+        fetchRules();
+    }, [showMessage]);
+
+    const handleConfigChange = (id, field, value, isNumeric = false, isArray = false) => {
+        setRules(currentRules =>
+            currentRules.map(rule => {
+                if (rule.id === id) {
+                    let finalValue = value;
+                    if (isNumeric) finalValue = parseFloat(value) || 0;
+                    if (isArray) finalValue = value.split(',').map(item => item.trim());
+                    
+                    const newConfig = { ...rule.config, [field]: finalValue };
+                    return { ...rule, config: newConfig };
+                }
+                return rule;
+            })
+        );
+    };
+    
+    // Especial para el textarea de JSON
+    const handleJsonChange = (id, jsonString) => {
+         setRules(currentRules =>
+            currentRules.map(rule => {
+                if (rule.id === id) {
+                    try {
+                        const newConfig = JSON.parse(jsonString);
+                        return { ...rule, config: newConfig };
+                    } catch(e) {
+                        // Si el JSON es inválido, no actualizamos para evitar errores
+                        console.error("JSON inválido:", e);
+                        // Idealmente, aquí se podría mostrar un error visual al usuario
+                        return rule;
+                    }
+                }
+                return rule;
+            })
+        );
+    };
+
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const updatePromises = rules.map(rule =>
+                supabase.from('business_rules').update({ config: rule.config }).eq('id', rule.id)
+            );
+            const results = await Promise.all(updatePromises);
+            const firstError = results.find(res => res.error);
+            if (firstError) throw firstError.error;
+            showMessage('Reglas guardadas con éxito!', 'success');
+        } catch (error) {
+            showMessage(`Error al guardar las reglas: ${error.message}`, 'error');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+    
+    if (isLoading) {
+        return <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md"><p className="text-center text-gray-400">Cargando Motor de Reglas...</p></div>;
+    }
+
+    return (
+        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md">
+            <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-semibold text-white">4. Motor de Reglas (Kits y Precios Premium)</h3>
+                 <button onClick={handleSave} disabled={isSaving} className="px-5 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:opacity-50">
+                    {isSaving ? 'Guardando...' : 'Guardar Reglas'}
+                 </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {rules.map(rule => {
+                    switch (rule.rule_type) {
+                        case 'premium_fee':
+                            return (<div key={rule.id}><label className="block text-sm font-medium text-gray-300 mb-1">{rule.rule_name} (%)</label><input type="number" value={rule.config.fee_percentage || ''} onChange={(e) => handleConfigChange(rule.id, 'fee_percentage', e.target.value, true)} className="w-full p-2 bg-gray-700 border-gray-600 rounded-md text-white" /></div>);
+                        case 'kit_config':
+                            return (<div key={rule.id} className="space-y-2"><label className="block text-sm font-medium text-gray-300">{rule.rule_name}</label><div className="flex items-center"><input type="checkbox" checked={rule.config.apply_to_all || false} onChange={(e) => handleConfigChange(rule.id, 'apply_to_all', e.target.checked)} className="w-4 h-4 mr-2 bg-gray-700 border-gray-600" /><span className="text-white">Aplicar a todos los SKUs</span></div><div><label className="text-xs text-gray-400">Multiplicadores (separados por coma)</label><input type="text" value={(rule.config.multipliers || []).join(',')} onChange={(e) => handleConfigChange(rule.id, 'multipliers', e.target.value.split(',').map(n=>parseInt(n.trim())).filter(Boolean))} className="w-full p-2 mt-1 bg-gray-700 border-gray-600 rounded-md text-white" /></div><div><label className="text-xs text-gray-400">Prefijos a excluir (separados por coma)</label><input type="text" value={(rule.config.excluded_prefixes || []).join(',')} onChange={(e) => handleConfigChange(rule.id, 'excluded_prefixes', e.target.value, false, true)} className="w-full p-2 mt-1 bg-gray-700 border-gray-600 rounded-md text-white" /></div></div>);
+                        case 'special_rules':
+                             return (<div key={rule.id}><label className="block text-sm font-medium text-gray-300 mb-1">{rule.rule_name} (JSON)</label><textarea value={JSON.stringify(rule.config, null, 2)} onChange={(e) => handleJsonChange(rule.id, e.target.value)} className="w-full h-32 p-2 bg-gray-900 border-gray-600 rounded-md text-white font-mono" /></div>);
+                        default:
+                            return null;
+                    }
+                })}
+            </div>
+        </div>
+    );
+}
+
+// --- FIN DEL NUEVO CÓDIGO ---
+
+
 const Tools = () => {
     return (
         <div>
@@ -237,6 +342,7 @@ const Tools = () => {
             <SuppliersManager />
             <CategoriesManager />
             <BulkPriceUpdater />
+            <RulesManager /> {/* <-- Añadimos el nuevo componente aquí */}
         </div>
     );
 };
