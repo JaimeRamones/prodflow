@@ -173,7 +173,7 @@ const PublicationsView = () => {
                         {publications.length > 0 ? publications.map(pub => (
                             <div key={`${pub.meli_id}-${pub.meli_variation_id}`} className="flex items-center p-4 space-x-4">
                                 
-                                // Reemplázalo con este nuevo bloque mejorado
+                                //  Reemplázalo con este nuevo bloque mejorado
                             {pub.thumbnail_url ? (
                             <img 
                               src={pub.thumbnail_url} 
