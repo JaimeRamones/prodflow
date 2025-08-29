@@ -60,7 +60,7 @@ serve(async (_req) => {
         }
 
         const supplierHeaderConfig = {
-            'rodamitre': { sku: 'cod. art.', price: 'p neto + iva', stock: 'stock 1' },
+            'rodamitre': { sku: 'cod. art.', price: 'neto + iva', stock: 'stock 1' },
             'ventor': { sku: 'código', price: 'precio', stock: 'stock' },
             'iden': { sku: 'código', price: 'precio', stock: 'stock' },
             'iturria': { sku: 'código', price: 'precio', stock: 'stock' },
