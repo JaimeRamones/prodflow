@@ -24,45 +24,33 @@ serve(async (req) => {
     
     const accessToken = userCredentials.access_token;
 
-    // 1. LEER el estado actual de la publicación desde Mercado Libre
     const getItemResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}?include_attributes=all`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     if (!getItemResponse.ok) throw new Error('No se pudo obtener la publicación de Mercado Libre.');
     const currentItem = await getItemResponse.json();
 
-    // 2. MODIFICAR los datos en memoria según la regla de la API
     let body;
     if (meli_variation_id && currentItem.variations && currentItem.variations.length > 0) {
-      // --- INICIA LA CORRECCIÓN ---
-      // Para publicaciones con variaciones
       const updatedVariations = currentItem.variations.map(variation => {
         if (variation.id === meli_variation_id) {
-          // Modificamos la variación, pero SIN el SKU aquí
           const newVariation = { ...variation, price: newPrice };
-          // El campo 'seller_custom_field' no debe ir en la variación
           delete newVariation.seller_custom_field; 
           return newVariation;
         }
         return variation;
       });
-
-      // Construimos el cuerpo: SKU a nivel de item, y el array de variaciones solo con el precio actualizado.
       body = {
-        seller_custom_field: newSku, // SKU a nivel del item
-        variations: updatedVariations // Array de variaciones actualizado
+        seller_custom_field: newSku,
+        variations: updatedVariations
       };
-      // --- FIN DE LA CORRECCIÓN ---
-
     } else {
-      // Para publicaciones simples, sin variaciones, la lógica anterior estaba bien
       body = {
         price: newPrice,
         seller_custom_field: newSku
       };
     }
     
-    // 3. ENVIAR la estructura completa y actualizada de vuelta a Mercado Libre
     const updateResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
       method: 'PUT',
       headers: {
@@ -78,12 +66,25 @@ serve(async (req) => {
       throw new Error(`Error de Mercado Libre: ${errorData.message}`);
     }
 
-    // 4. Actualizar nuestra base de datos local para mantener la consistencia
-    const { error: dbError } = await supabaseAdmin
+    // --- INICIA LA CORRECCIÓN PARA LA BASE DE DATOS ---
+    // 1. Construimos la consulta base
+    let query = supabaseAdmin
       .from('mercadolibre_listings')
       .update({ price: newPrice, sku: newSku })
-      .eq('meli_id', meli_id)
-      .eq('meli_variation_id', meli_variation_id);
+      .eq('meli_id', meli_id);
+
+    // 2. Añadimos el filtro correcto para la variación
+    if (meli_variation_id) {
+      // Si SÍ hay ID de variación, usamos .eq()
+      query = query.eq('meli_variation_id', meli_variation_id);
+    } else {
+      // Si NO hay ID de variación (es null), usamos .is()
+      query = query.is('meli_variation_id', null);
+    }
+    
+    // 3. Ejecutamos la consulta
+    const { error: dbError } = await query;
+    // --- FIN DE LA CORRECCIÓN ---
       
     if (dbError) throw dbError;
 
