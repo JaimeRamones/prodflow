@@ -1,6 +1,9 @@
+// Ruta: supabase/functions/dropbox-file-processor/index.ts
+
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
+import * as xlsx from 'https://esm.sh/xlsx@0.18.5'
 
 async function getDropboxAccessToken() {
     const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')
@@ -8,7 +11,7 @@ async function getDropboxAccessToken() {
     const appSecret = Deno.env.get('DROPBOX_APP_SECRET')
 
     if (!refreshToken || !appKey || !appSecret) {
-        throw new Error('Faltan secretos de Dropbox en la configuración (APP_KEY, APP_SECRET, o REFRESH_TOKEN).');
+        throw new Error('Faltan secretos de Dropbox en la configuración.');
     }
 
     const response = await fetch('https://api.dropbox.com/oauth2/token', {
@@ -50,6 +53,7 @@ serve(async (_req) => {
             .eq('type', 'proveedor');
         
         if (warehouseError) throw warehouseError;
+
         if (!warehouses || warehouses.length === 0) {
             return new Response(JSON.stringify({ message: "No se encontraron almacenes de tipo 'proveedor'." }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
@@ -65,7 +69,7 @@ serve(async (_req) => {
         if (!listFilesResponse.ok) throw new Error('Error al listar archivos de Dropbox.');
 
         const filesData = await listFilesResponse.json();
-        const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.endsWith('.txt') || file.name.endsWith('.csv')));
+        const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.xlsx')));
 
         if (stockFileEntries.length === 0) {
             return new Response(JSON.stringify({ message: "No se encontraron archivos para procesar." }), { 
@@ -74,7 +78,7 @@ serve(async (_req) => {
         }
 
         for (const file of stockFileEntries) {
-            const providerName = file.name.replace(/\.(txt|csv)$/i, '');
+            const providerName = file.name.replace(/\.(txt|csv|xlsx)$/i, '');
             const warehouse = warehouses.find(w => w.name.toLowerCase() === providerName.toLowerCase());
 
             if (!warehouse) {
@@ -95,49 +99,75 @@ serve(async (_req) => {
                 continue;
             }
 
-            const fileContent = await downloadResponse.text();
-            const lines = fileContent.split(/\r?\n/);
-
             const itemsToInsert = [];
 
-            for (const line of lines) {
-                if (line.trim() === '') continue;
+            if (file.name.toLowerCase().endsWith('.xlsx')) {
+                const fileBuffer = await downloadResponse.arrayBuffer();
+                const workbook = xlsx.read(new Uint8Array(fileBuffer), { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
-                // --- INICIO DE LA CORRECCIÓN ---
-                // Usamos una expresión regular para dividir por CUALQUIER cantidad de espacios en blanco (incluyendo tabuladores).
-                // Esto maneja "SKU      CON    ESPACIOS" y "SKU SIMPLE" de la misma forma.
-                // Usamos .trim() al inicio para eliminar espacios en blanco al principio o al final de la línea.
-                const parts = line.trim().split(/\s+/);
-                // --- FIN DE LA CORRECCIÓN ---
-
-                if (parts.length < 3) {
-                    console.warn(`Formato inválido (No hay 3 campos separados por tabulador o espacios): "${line}"`);
+                if (jsonData.length < 2) {
+                    console.warn(`Archivo Excel '${file.name}' está vacío o no tiene datos.`);
                     continue;
                 }
 
-                const priceStr = parts[parts.length - 1];
-                const quantityStr = parts[parts.length - 2];
-                // El SKU es todo lo demás, unido por un solo espacio. Esto reconstruye SKUs con espacios internos.
-                const sku = parts.slice(0, parts.length - 2).join(' ');
+                const headers = jsonData[0] as string[];
+                const dataRows = jsonData.slice(1);
+                
+                const headerMap = {
+                    sku: headers.findIndex(h => h.toLowerCase().includes('cod. art.')),
+                    price: headers.findIndex(h => h.toLowerCase().includes('p neto + iva')),
+                    stock: headers.findIndex(h => h.toLowerCase().includes('stock 1'))
+                };
 
-                if (!sku) {
-                    console.warn(`SKU vacío en línea: "${line}"`);
+                if (headerMap.sku === -1 || headerMap.price === -1 || headerMap.stock === -1) {
+                    console.error(`Archivo Excel '${file.name}' ignorado. Faltan cabeceras requeridas: 'Cod. Art.', 'P Neto + IVA', 'Stock 1'.`);
                     continue;
                 }
 
-                const quantity = parseInt(quantityStr, 10);
-                const cost_price = parseFloat(priceStr.replace(',', '.'));
+                for (const row of dataRows) {
+                    const sku = row[headerMap.sku]?.toString().trim();
+                    const quantity = parseInt(row[headerMap.stock], 10);
+                    const cost_price = parseFloat(row[headerMap.price]);
 
-                if (!isNaN(quantity) && !isNaN(cost_price)) {
-                    itemsToInsert.push({
-                        warehouse_id: warehouse.id,
-                        sku: sku,
-                        quantity: quantity,
-                        cost_price: cost_price,
-                        last_updated: new Date().toISOString(),
-                    });
-                } else {
-                     console.warn(`Error al parsear la línea (cantidad o precio no numéricos): "${line}"`);
+                    if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
+                        itemsToInsert.push({
+                            warehouse_id: warehouse.id,
+                            sku,
+                            quantity,
+                            cost_price,
+                            last_updated: new Date().toISOString(),
+                        });
+                    }
+                }
+            } else {
+                const fileContent = await downloadResponse.text();
+                const lines = fileContent.split(/\r?\n/);
+
+                for (const line of lines) {
+                    if (line.trim() === '') continue;
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length < 3) continue;
+                    
+                    const priceStr = parts[parts.length - 1];
+                    const quantityStr = parts[parts.length - 2];
+                    const sku = parts.slice(0, parts.length - 2).join(' ');
+                    if (!sku) continue;
+
+                    const quantity = parseInt(quantityStr, 10);
+                    const cost_price = parseFloat(priceStr.replace(',', '.'));
+
+                    if (!isNaN(quantity) && !isNaN(cost_price)) {
+                        itemsToInsert.push({
+                            warehouse_id: warehouse.id,
+                            sku,
+                            quantity,
+                            cost_price,
+                            last_updated: new Date().toISOString(),
+                        });
+                    }
                 }
             }
 
