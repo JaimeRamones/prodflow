@@ -53,24 +53,13 @@ serve(async (_req) => {
             });
         }
 
-        // --- INICIO DE LA CORRECCIÓN ---
-        // Se actualiza la configuración para Rodamitre con las cabeceras exactas
         const supplierHeaderConfig = {
-            'rodamitre': { 
-                sku: 'cod. art. p.',
-                price: 'neto + iva',
-                stock: 'stock 1'
-            },
-            'ventor': {
-                sku: 'código',
-                price: 'precio',
-                stock: 'stock'
-            },
+            'rodamitre': { sku: 'cod. art. p.', price: 'neto + iva', stock: 'stock 1' },
+            'ventor': { sku: 'código', price: 'precio', stock: 'stock' },
             'iden': { sku: 'código', price: 'precio', stock: 'stock' },
             'iturria': { sku: 'código', price: 'precio', stock: 'stock' },
             'rodamientos_brothers': { sku: 'código', price: 'precio', stock: 'stock' }
         };
-        // --- FIN DE LA CORRECCIÓN ---
 
         const listFilesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
             method: 'POST',
@@ -134,12 +123,18 @@ serve(async (_req) => {
                 const lines = fileContent.split(/\r?\n/);
                 for (const line of lines) {
                     if (line.trim() === '') continue;
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length < 3) continue;
                     
-                    const priceStr = parts[parts.length - 1];
-                    const quantityStr = parts[parts.length - 2];
-                    const sku = parts.slice(0, parts.length - 2).join(' ');
+                    const match = line.match(/^(.+?)\s+(\S+)\s+(\S+)$/);
+
+                    if (!match) {
+                        console.warn(`Formato de línea inválido en archivo de texto: "${line}"`);
+                        continue;
+                    }
+                    
+                    const sku = match[1].trim();
+                    const quantityStr = match[2];
+                    const priceStr = match[3];
+
                     if (!sku) continue;
                     const quantity = parseInt(quantityStr, 10);
                     const raw_price = parseFloat(priceStr.replace(',', '.'));
