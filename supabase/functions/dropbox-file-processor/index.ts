@@ -59,33 +59,12 @@ serve(async (_req) => {
             });
         }
 
-        // --- CONFIGURACIÓN DE CABECERAS PARA PROVEEDORES DE EXCEL ---
         const supplierHeaderConfig = {
-            'rodamitre': { // Ejemplo del caso anterior, puedes borrarlo si no lo usas
-                sku: 'cod. art.',
-                price: 'neto + iva',
-                stock: 'stock 1'
-            },
-            'ventor': {
-                sku: 'código',
-                price: 'precio',
-                stock: 'stock'
-            },
-            'iden': { // Nuevo proveedor con la misma config de Ventor
-                sku: 'código',
-                price: 'precio',
-                stock: 'stock'
-            },
-            'iturria': { // Nuevo proveedor con la misma config de Ventor
-                sku: 'código',
-                price: 'precio',
-                stock: 'stock'
-            },
-            'rodamientos_brothers': { // Nuevo proveedor con la misma config de Ventor
-                sku: 'código',
-                price: 'precio',
-                stock: 'stock'
-            }
+            'rodamitre': { sku: 'cod. art.', price: 'p neto + iva', stock: 'stock 1' },
+            'ventor': { sku: 'código', price: 'precio', stock: 'stock' },
+            'iden': { sku: 'código', price: 'precio', stock: 'stock' },
+            'iturria': { sku: 'código', price: 'precio', stock: 'stock' },
+            'rodamientos_brothers': { sku: 'código', price: 'precio', stock: 'stock' }
         };
 
         const listFilesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
@@ -161,7 +140,10 @@ serve(async (_req) => {
                 for (const row of dataRows) {
                     const sku = row[headerMap.sku]?.toString().trim();
                     const quantity = parseInt(row[headerMap.stock], 10);
-                    const cost_price = parseFloat(row[headerMap.price]);
+                    const raw_price = parseFloat(row[headerMap.price]);
+
+                    // --- CORRECCIÓN: Redondeamos el precio a 2 decimales ---
+                    const cost_price = parseFloat(raw_price.toFixed(2));
 
                     if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
                         itemsToInsert.push({
@@ -187,7 +169,11 @@ serve(async (_req) => {
                     const sku = parts.slice(0, parts.length - 2).join(' ');
                     if (!sku) continue;
                     const quantity = parseInt(quantityStr, 10);
-                    const cost_price = parseFloat(priceStr.replace(',', '.'));
+                    const raw_price = parseFloat(priceStr.replace(',', '.'));
+
+                    // --- CORRECCIÓN: Redondeamos el precio a 2 decimales ---
+                    const cost_price = parseFloat(raw_price.toFixed(2));
+
                     if (!isNaN(quantity) && !isNaN(cost_price)) {
                         itemsToInsert.push({
                             warehouse_id: warehouse.id,
