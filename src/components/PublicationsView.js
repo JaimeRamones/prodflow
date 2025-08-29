@@ -173,17 +173,23 @@ const PublicationsView = () => {
                         {publications.length > 0 ? publications.map(pub => (
                             <div key={`${pub.meli_id}-${pub.meli_variation_id}`} className="flex items-center p-4 space-x-4">
                                 
-                                {/* 3. HACEMOS LA IMAGEN CLICKEABLE */}
-                                {pub.pictures && pub.pictures.length > 0 ? (
-                                    <img 
-                                        src={pub.thumbnail_url} 
-                                        alt={pub.title} 
-                                        className="w-16 h-16 object-cover rounded-md flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                                        onClick={() => setZoomedImageUrl(pub.pictures[0].url)}
-                                    />
-                                ) : (
-                                    <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-500">Sin img</div>
-                                )}
+                                // Reemplázalo con este nuevo bloque mejorado
+                            {pub.thumbnail_url ? (
+                            <img 
+                              src={pub.thumbnail_url} 
+                              alt={pub.title} 
+                              // El estilo de cursor y el efecto hover solo se aplican si se puede hacer zoom
+                             className={`w-16 h-16 object-cover rounded-md flex-shrink-0 ${pub.pictures && pub.pictures.length > 0 ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                               // La función onClick solo se ejecuta si existen los datos para el zoom
+                             onClick={() => {
+                     if (pub.pictures && pub.pictures.length > 0) {
+                setZoomedImageUrl(pub.pictures[0].url);
+            }
+        }}
+    />
+) : (
+    <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-500">Sin img</div>
+)}
                                 
                                 <div className="flex-grow">
                                     <a href={pub.permalink} target="_blank" rel="noopener noreferrer" className="text-white font-semibold hover:underline">{pub.title}</a>

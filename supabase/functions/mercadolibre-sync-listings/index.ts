@@ -3,7 +3,6 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import { corsHeaders } from '../_shared/cors.ts'
 
 async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseClient, userId: string) {
-  // Esta función se mantiene igual, no necesita cambios.
   const MELI_CLIENT_ID = Deno.env.get('MELI_CLIENT_ID')!
   const MELI_CLIENT_SECRET = Deno.env.get('MELI_CLIENT_SECRET')!
   const response = await fetch('https://api.mercadolibre.com/oauth/token', {
@@ -64,7 +63,6 @@ serve(async (req) => {
     const meliUserId = mlTokens.meli_user_id;
     if (!meliUserId) throw new Error('ML User ID is missing from credentials.');
 
-    // --- INICIO DE LA NUEVA LÓGICA CON search_type=scan ---
     const allListingIds = [];
     let scrollId: string | null = null;
 
@@ -85,21 +83,18 @@ serve(async (req) => {
 
       const listingsIdsData = await listingsIdsResponse.json();
       const results = listingsIdsData.results;
-      scrollId = listingsIdsData.scroll_id; // Guardamos el scroll_id para la siguiente iteración
+      scrollId = listingsIdsData.scroll_id; 
 
       if (!results || results.length === 0) {
-        // Si no hay más resultados, salimos del bucle
         break;
       }
       
       allListingIds.push(...results);
 
-      // Si no hay scroll_id, significa que hemos llegado al final en la primera página
       if (!scrollId) {
         break;
       }
     }
-    // --- FIN DE LA NUEVA LÓGICA ---
 
     if (allListingIds.length === 0) {
       await supabaseAdmin.from('mercadolibre_listings').delete().eq('user_id', user.id);
@@ -108,7 +103,9 @@ serve(async (req) => {
 
     const CHUNK_SIZE = 20;
     const allListingsToUpsert = [];
-    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail';
+
+    // --- CAMBIO 1: Añadimos 'pictures' a la lista de atributos que pedimos a la API ---
+    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,pictures';
 
     for (let i = 0; i < allListingIds.length; i += CHUNK_SIZE) {
       const chunk = allListingIds.slice(i, i + CHUNK_SIZE);
@@ -138,6 +135,8 @@ serve(async (req) => {
                 available_quantity: variation.available_quantity, sold_quantity: variation.sold_quantity,
                 last_synced_at: new Date().toISOString(), status: item.body.status, 
                 listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
+                // --- CAMBIO 2: Añadimos el campo 'pictures' para guardarlo ---
+                pictures: item.body.pictures,
               });
             }
           }
@@ -151,6 +150,8 @@ serve(async (req) => {
               sold_quantity: item.body.sold_quantity,
               last_synced_at: new Date().toISOString(), status: item.body.status,
               listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
+              // --- CAMBIO 3: Añadimos también aquí el campo 'pictures' ---
+              pictures: item.body.pictures,
             });
           }
         }
