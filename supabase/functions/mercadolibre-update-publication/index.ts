@@ -24,34 +24,38 @@ serve(async (req) => {
     
     const accessToken = userCredentials.access_token;
 
-    // --- INICIA LA NUEVA LÓGICA ---
-
     // 1. LEER el estado actual de la publicación desde Mercado Libre
-    const getItemResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
+    const getItemResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}?include_attributes=all`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     if (!getItemResponse.ok) throw new Error('No se pudo obtener la publicación de Mercado Libre.');
     const currentItem = await getItemResponse.json();
 
-    // 2. MODIFICAR los datos en memoria
+    // 2. MODIFICAR los datos en memoria según la regla de la API
     let body;
     if (meli_variation_id && currentItem.variations && currentItem.variations.length > 0) {
-      // Es una publicación con variaciones
+      // --- INICIA LA CORRECCIÓN ---
+      // Para publicaciones con variaciones
       const updatedVariations = currentItem.variations.map(variation => {
         if (variation.id === meli_variation_id) {
-          // Esta es la variación que queremos cambiar
-          return {
-            ...variation, // Mantenemos todos los datos existentes de la variación
-            price: newPrice,
-            seller_custom_field: newSku
-          };
+          // Modificamos la variación, pero SIN el SKU aquí
+          const newVariation = { ...variation, price: newPrice };
+          // El campo 'seller_custom_field' no debe ir en la variación
+          delete newVariation.seller_custom_field; 
+          return newVariation;
         }
-        return variation; // Devolvemos las otras variaciones sin cambios
+        return variation;
       });
-      body = { variations: updatedVariations };
+
+      // Construimos el cuerpo: SKU a nivel de item, y el array de variaciones solo con el precio actualizado.
+      body = {
+        seller_custom_field: newSku, // SKU a nivel del item
+        variations: updatedVariations // Array de variaciones actualizado
+      };
+      // --- FIN DE LA CORRECCIÓN ---
 
     } else {
-      // Es una publicación simple, sin variaciones
+      // Para publicaciones simples, sin variaciones, la lógica anterior estaba bien
       body = {
         price: newPrice,
         seller_custom_field: newSku
@@ -79,7 +83,7 @@ serve(async (req) => {
       .from('mercadolibre_listings')
       .update({ price: newPrice, sku: newSku })
       .eq('meli_id', meli_id)
-      .eq('meli_variation_id', meli_variation_id); // Aseguramos actualizar la variación correcta
+      .eq('meli_variation_id', meli_variation_id);
       
     if (dbError) throw dbError;
 
