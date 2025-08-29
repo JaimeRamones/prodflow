@@ -24,29 +24,22 @@ serve(async (req) => {
     
     const accessToken = userCredentials.access_token;
 
-    // 1. LEER el estado actual del item
     const getItemResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}?include_attributes=all`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     if (!getItemResponse.ok) throw new Error('No se pudo obtener la publicación de Mercado Libre.');
     const currentItem = await getItemResponse.json();
 
-    // 2. MODIFICAR los datos en memoria
-    
-    // --- INICIA LA CORRECCIÓN DEFINITIVA ---
-    // Actualizamos el atributo SELLER_SKU dentro de la lista de atributos
     const sellerSkuAttribute = currentItem.attributes.find(attr => attr.id === 'SELLER_SKU');
     if (sellerSkuAttribute) {
       sellerSkuAttribute.value_name = newSku;
     } else {
-      // Si por alguna razón no existe, lo agregamos
       currentItem.attributes.push({ id: 'SELLER_SKU', value_name: newSku });
     }
 
     let body;
 
     if (meli_variation_id && currentItem.variations && currentItem.variations.length > 0) {
-      // Para publicaciones con variaciones
       const updatedVariations = currentItem.variations.map(variation => {
         if (variation.id === meli_variation_id) {
           const newVariation = { ...variation, price: newPrice };
@@ -56,25 +49,22 @@ serve(async (req) => {
         return variation;
       });
       
+      // --- CORRECCIÓN: Quitamos el campo 'title' ---
       body = {
-        title: currentItem.title, // Es buena práctica reenviar el título
         seller_custom_field: newSku,
         attributes: currentItem.attributes,
         variations: updatedVariations,
       };
 
     } else {
-      // Para publicaciones simples
+      // --- CORRECCIÓN: Quitamos el campo 'title' ---
       body = {
-        title: currentItem.title,
         price: newPrice,
         seller_custom_field: newSku,
         attributes: currentItem.attributes,
       };
     }
-    // --- FIN DE LA CORRECCIÓN DEFINITIVA ---
     
-    // 3. ENVIAR el objeto actualizado a Mercado Libre
     const updateResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
       method: 'PUT',
       headers: {
@@ -90,7 +80,6 @@ serve(async (req) => {
       throw new Error(`Error de Mercado Libre: ${errorData.message}`);
     }
 
-    // 4. Actualizar nuestra base de datos local
     let query = supabaseAdmin
       .from('mercadolibre_listings')
       .update({ price: newPrice, sku: newSku })
