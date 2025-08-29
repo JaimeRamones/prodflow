@@ -6,7 +6,7 @@ import { supabase } from '../supabaseClient';
 
 const ITEMS_PER_PAGE = 20;
 
-// Pequeños componentes para dar estilo a los estados
+// Pequeños componentes para dar estilo a los estados (sin cambios)
 const StatusPill = ({ status }) => {
     const styles = {
         active: 'bg-green-500 text-green-100',
@@ -44,32 +44,50 @@ const PublicationsView = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [page, setPage] = useState(0);
     const [count, setCount] = useState(0);
-    // --- NUEVO: Estado para la barra de búsqueda ---
     const [searchTerm, setSearchTerm] = useState('');
 
-    // --- MEJORA: El useEffect ahora reacciona a los cambios en la búsqueda ---
+    // --- PASO 1: AÑADIR NUEVOS ESTADOS PARA FILTROS Y ORDEN ---
+    const [statusFilter, setStatusFilter] = useState(''); // 'active', 'paused', 'closed'
+    const [typeFilter, setTypeFilter] = useState('');   // 'gold_special', 'gold_pro'
+    const [sortBy, setSortBy] = useState('title');      // 'title', 'sold_quantity'
+
+    // --- PASO 2: MODIFICAR EL useEffect PARA INCLUIR LOS NUEVOS FILTROS ---
     useEffect(() => {
-        // Esta función interna se encarga de llamar a la base de datos
         const fetchPublications = async () => {
             setIsLoading(true);
             const from = page * ITEMS_PER_PAGE;
             const to = from + ITEMS_PER_PAGE - 1;
 
-            // Construimos la consulta a Supabase
             let query = supabase
                 .from('mercadolibre_listings')
                 .select('*', { count: 'exact' });
 
-            // Si hay un término de búsqueda, añadimos el filtro
+            // Filtro de búsqueda de texto
             if (searchTerm.trim()) {
                 const cleanedSearchTerm = searchTerm.trim().replace(/%/g, '');
                 query = query.or(`title.ilike.%${cleanedSearchTerm}%,sku.ilike.%${cleanedSearchTerm}%,meli_id.ilike.%${cleanedSearchTerm}%`);
             }
 
-            // Ejecutamos la consulta final con orden y paginación
-            const { data, error, count } = await query
-                .order('title', { ascending: true })
-                .range(from, to);
+            // Filtro por estado (activas, pausadas, etc.)
+            if (statusFilter) {
+                query = query.eq('status', statusFilter);
+            }
+
+            // Filtro por tipo de publicación (premium, clásica)
+            if (typeFilter) {
+                query = query.eq('listing_type_id', typeFilter);
+            }
+            
+            // Lógica de ordenamiento
+            if (sortBy === 'sold_quantity') {
+                // Ordena por más vendidos, poniendo los que no tienen ventas al final
+                query = query.order('sold_quantity', { ascending: false, nullsFirst: false });
+            } else {
+                // Ordenamiento por defecto por título
+                query = query.order('title', { ascending: true });
+            }
+
+            const { data, error, count: queryCount } = await query.range(from, to);
             
             if (error) {
                 console.error("Error fetching publications:", error);
@@ -80,23 +98,22 @@ const PublicationsView = () => {
                     return { ...pub, stock_reservado: product?.stock_reservado ?? 0 };
                 });
                 setPublications(linkedData);
-                setCount(count || 0);
+                setCount(queryCount || 0);
             }
             setIsLoading(false);
         };
         
-        // Usamos un debounce para no hacer una llamada a la API en cada tecla que se presiona
         const debounceTimeout = setTimeout(() => {
             fetchPublications();
-        }, 300); // Espera 300ms después de que el usuario deja de escribir
+        }, 300);
 
-        return () => clearTimeout(debounceTimeout); // Limpia el timeout si el usuario sigue escribiendo
-    }, [page, products, searchTerm]);
+        return () => clearTimeout(debounceTimeout);
+    }, [page, products, searchTerm, statusFilter, typeFilter, sortBy]); // Se añaden los nuevos filtros a las dependencias
 
-    // --- NUEVO: Efecto para resetear la página a 0 cuando se inicia una nueva búsqueda ---
+    // --- PASO 3: RESETEAR LA PÁGINA CUANDO CAMBIAN LOS FILTROS O LA BÚSQUEDA ---
     useEffect(() => {
         setPage(0);
-    }, [searchTerm]);
+    }, [searchTerm, statusFilter, typeFilter, sortBy]);
 
     const totalPages = Math.ceil(count / ITEMS_PER_PAGE);
 
@@ -104,15 +121,59 @@ const PublicationsView = () => {
         <div>
             <h2 className="text-3xl font-bold text-white mb-6">Publicaciones de Mercado Libre</h2>
             
-            {/* --- NUEVO: Barra de Búsqueda --- */}
-            <div className="mb-4">
+            {/* --- PASO 4: NUEVA SECCIÓN DE BÚSQUEDA Y FILTROS --- */}
+            <div className="mb-6 p-4 bg-gray-900/50 rounded-lg space-y-4">
                 <input
                     type="text"
                     placeholder="Buscar por ID de ML, título o SKU..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Filtro de Estado */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Estado</label>
+                        <select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Todos</option>
+                            <option value="active">Activas</option>
+                            <option value="paused">Pausadas</option>
+                            <option value="closed">Inactivas/Finalizadas</option>
+                        </select>
+                    </div>
+
+                    {/* Filtro de Tipo */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Tipo de Publicación</label>
+                        <select
+                            value={typeFilter}
+                            onChange={(e) => setTypeFilter(e.target.value)}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Todos</option>
+                            <option value="gold_special">Premium</option>
+                            <option value="gold_pro">Clásica</option>
+                        </select>
+                    </div>
+
+                    {/* Ordenamiento */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Ordenar por</label>
+                        <select
+                            value={sortBy}
+                            onChange={(e) => setSortBy(e.target.value)}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="title">Título (A-Z)</option>
+                            <option value="sold_quantity">Más Vendidos</option>
+                        </select>
+                    </div>
+                </div>
             </div>
             
             <div className="bg-gray-800 border border-gray-700 rounded-lg">
@@ -126,7 +187,6 @@ const PublicationsView = () => {
                                 
                                 <div className="flex-grow">
                                     <a href={pub.permalink} target="_blank" rel="noopener noreferrer" className="text-white font-semibold hover:underline">{pub.title}</a>
-                                    {/* --- NUEVO: Mostramos el ID de ML --- */}
                                     <p className="text-xs text-gray-500 font-mono">ID: {pub.meli_id}</p>
                                     <p className="text-sm text-gray-400">SKU: {pub.sku || 'No asignado'}</p>
                                     <div className="flex items-center space-x-2 mt-1">
@@ -136,18 +196,17 @@ const PublicationsView = () => {
                                 </div>
                                 <div className="text-right flex-shrink-0 w-48">
                                     <p className="text-white font-mono text-lg">${new Intl.NumberFormat('es-AR').format(pub.price)}</p>
-                                    {/* --- NUEVO: Mostramos la cantidad de vendidos --- */}
                                     <p className="text-sm text-gray-400">Vendidos: <span className="font-semibold text-white">{pub.sold_quantity ?? 0}</span></p>
                                     <p className="text-sm text-gray-400">Disponible: <span className="font-semibold text-green-400">{pub.available_quantity}</span></p>
                                     <p className="text-sm text-gray-400">Reservado: <span className="font-semibold text-yellow-400">{pub.stock_reservado}</span></p>
                                 </div>
                             </div>
                         )) : (
-                            <p className="text-center p-8 text-gray-500">No se encontraron publicaciones.</p>
+                            <p className="text-center p-8 text-gray-500">No se encontraron publicaciones que coincidan con los filtros.</p>
                         )}
                     </div>
                 )}
-                 {/* Controles de Paginación (se mantienen igual) */}
+                 {/* Controles de Paginación (sin cambios) */}
                 <div className="flex justify-between items-center p-4 border-t border-gray-700">
                     <button 
                         onClick={() => setPage(p => Math.max(0, p - 1))} 

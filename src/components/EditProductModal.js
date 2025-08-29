@@ -45,12 +45,12 @@ const EditProductModal = ({ product, onClose, onSave }) => {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        // --- CAMBIO 1: Añadimos 'stock_disponible' a la lista de campos numéricos ---
-        const isNumeric = name === 'supplier_id' || name === 'stock_disponible';
-        // Usamos parseFloat para costo, e Int para el resto de numéricos
+        // --- CAMBIO 1: Cambiamos 'stock_disponible' por 'stock_total' en la lista de campos numéricos ---
+        const isNumeric = name === 'supplier_id' || name === 'stock_total';
+        
         let finalValue;
         if (name === 'cost_price') {
-            finalValue = value; // Se mantiene como string para el input, el useEffect lo maneja
+            finalValue = value; 
         } else if (isNumeric) {
             finalValue = value ? parseInt(value, 10) : null;
         } else {
@@ -67,7 +67,12 @@ const EditProductModal = ({ product, onClose, onSave }) => {
 
     const handleSave = (e) => {
         e.preventDefault();
-        onSave(editedProduct);
+        // --- CAMBIO 2: Nos aseguramos de NO enviar 'stock_disponible' para que la DB lo calcule. ---
+        // Creamos una copia para no alterar el estado visual del modal.
+        const productToSave = { ...editedProduct };
+        delete productToSave.stock_disponible;
+
+        onSave(productToSave);
     };
 
     if (!product) return null;
@@ -98,7 +103,6 @@ const EditProductModal = ({ product, onClose, onSave }) => {
                              </div>
                         </div>
 
-                        {/* --- CAMBIO 2: Nueva sección para Costo, Precio y STOCK --- */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block mb-2 text-sm font-medium text-white">Costo</label>
@@ -108,10 +112,10 @@ const EditProductModal = ({ product, onClose, onSave }) => {
                                 <label className="block mb-2 text-sm font-medium text-white">Precio de Venta (Automático)</label>
                                 <input type="number" step="0.01" name="sale_price" value={editedProduct.sale_price || ''} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-900/50 border-gray-600 cursor-not-allowed" readOnly />
                             </div>
-                            {/* --- ESTE ES EL NUEVO CAMPO PARA EL STOCK --- */}
+                            {/* --- CAMBIO 3: El campo ahora edita 'stock_total' --- */}
                             <div>
-                                <label className="block mb-2 text-sm font-medium text-white">Stock Disponible</label>
-                                <input type="number" name="stock_disponible" value={editedProduct.stock_disponible || ''} onChange={handleChange} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" />
+                                <label className="block mb-2 text-sm font-medium text-white">Stock Total</label>
+                                <input type="number" name="stock_total" value={editedProduct.stock_total || ''} onChange={handleChange} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" />
                             </div>
                         </div>
                         
