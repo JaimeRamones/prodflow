@@ -6,7 +6,7 @@ import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
 import EditPublicationModal from './EditPublicationModal';
 
-const ITEMS_PER_PAGE = 20;
+const ITEMS_PER_PAGE = 50; // Aumentado a 50
 
 // --- Componentes de UI (Pills y Toggle) ---
 const StatusPill = ({ status }) => {
@@ -63,6 +63,7 @@ const PublicationsView = () => {
     
     const [selectedPublications, setSelectedPublications] = useState(new Set());
     const [syncFilter, setSyncFilter] = useState('');
+    const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false);
 
     useEffect(() => {
         const fetchPublications = async () => {
@@ -105,6 +106,7 @@ const PublicationsView = () => {
     useEffect(() => {
         setPage(0);
         setSelectedPublications(new Set());
+        setSelectAllAcrossPages(false);
     }, [searchTerm, statusFilter, typeFilter, sortBy, syncFilter]);
     
     const handleSelectPublication = (id, isSelected) => {
@@ -112,29 +114,53 @@ const PublicationsView = () => {
         if (isSelected) newSelection.add(id);
         else newSelection.delete(id);
         setSelectedPublications(newSelection);
+        setSelectAllAcrossPages(false);
     };
 
-    const handleSelectAll = (e) => {
+    const handleSelectAllOnPage = (e) => {
         if (e.target.checked) {
             setSelectedPublications(new Set(publications.map(p => p.id)));
         } else {
             setSelectedPublications(new Set());
+            setSelectAllAcrossPages(false);
         }
     };
     
     const handleBulkAction = async (enableSync) => {
-        if (selectedPublications.size === 0) return;
         const actionText = enableSync ? "activar" : "desactivar";
-        if (!window.confirm(`¿Estás seguro de que quieres ${actionText} la sincronización para ${selectedPublications.size} publicaciones?`)) return;
+        const totalToUpdate = selectAllAcrossPages ? count : selectedPublications.size;
 
-        const { error } = await supabase.from('mercadolibre_listings').update({ sync_enabled: enableSync }).in('id', Array.from(selectedPublications));
-        if (error) {
-            showMessage(`Error en la acción masiva: ${error.message}`, 'error');
-        } else {
+        if (totalToUpdate === 0) return;
+        if (!window.confirm(`¿Estás seguro de que quieres ${actionText} la sincronización para ${totalToUpdate} publicaciones?`)) return;
+
+        try {
+            let error;
+            if (selectAllAcrossPages) {
+                const { error: functionError } = await supabase.functions.invoke('mercadolibre-bulk-update-sync', {
+                    body: {
+                        filters: { searchTerm, statusFilter, typeFilter, syncFilter },
+                        enableSync
+                    }
+                });
+                error = functionError;
+            } else {
+                const { error: updateError } = await supabase
+                    .from('mercadolibre_listings')
+                    .update({ sync_enabled: enableSync })
+                    .in('id', Array.from(selectedPublications));
+                error = updateError;
+            }
+
+            if (error) throw error;
+            
             const updatedIds = Array.from(selectedPublications);
             setPublications(pubs => pubs.map(p => updatedIds.includes(p.id) ? { ...p, sync_enabled: enableSync } : p));
+            
             setSelectedPublications(new Set());
-            showMessage(`${selectedPublications.size} publicaciones actualizadas.`, 'success');
+            setSelectAllAcrossPages(false);
+            showMessage(`${totalToUpdate} publicaciones se están actualizando en segundo plano.`, 'success');
+        } catch (error) {
+            showMessage(`Error en la acción masiva: ${error.message}`, 'error');
         }
     };
     
@@ -148,8 +174,26 @@ const PublicationsView = () => {
         }
     };
     
-    const handleSavePublication = async ({ newPrice, newSku }) => { /* ... (código sin cambios) ... */ };
+    const handleSavePublication = async ({ newPrice, newSku }) => {
+        if (!editingPublication) return;
+        setIsSaving(true);
+        try {
+            const { error } = await supabase.functions.invoke('mercadolibre-update-publication', {
+                body: { publication: editingPublication, newPrice, newSku },
+            });
+            if (error) throw error;
+            setPublications(pubs => pubs.map(p => p.id === editingPublication.id ? { ...p, price: newPrice, sku: newSku } : p));
+            showMessage('Publicación actualizada con éxito!', 'success');
+            setEditingPublication(null);
+        } catch (error) {
+            showMessage(`Error al actualizar: ${error.message}`, 'error');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+    
     const totalPages = Math.ceil(count / ITEMS_PER_PAGE);
+    const isAllOnPageSelected = publications.length > 0 && selectedPublications.size === publications.length;
 
     return (
         <div>
@@ -172,9 +216,7 @@ const PublicationsView = () => {
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Estado de Sincronización</label>
                         <select value={syncFilter} onChange={(e) => setSyncFilter(e.target.value)} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white">
-                            <option value="">Todos</option>
-                            <option value="true">En Sincro</option>
-                            <option value="false">Fuera de Sincro</option>
+                            <option value="">Todos</option><option value="true">En Sincro</option><option value="false">Fuera de Sincro</option>
                         </select>
                     </div>
                     <div>
@@ -188,7 +230,14 @@ const PublicationsView = () => {
             
             {selectedPublications.size > 0 && (
                 <div className="mb-4 p-3 bg-blue-900/50 border border-blue-700 rounded-lg flex items-center justify-between">
-                    <span className="text-white font-semibold">{selectedPublications.size} seleccionada(s)</span>
+                    <div>
+                        <span className="text-white font-semibold">{selectAllAcrossPages ? `Todas las ${count}` : selectedPublications.size} seleccionada(s)</span>
+                        {isAllOnPageSelected && !selectAllAcrossPages && count > publications.length && (
+                             <button onClick={() => setSelectAllAcrossPages(true)} className="ml-4 text-blue-300 hover:text-blue-100 font-bold text-sm">
+                                Seleccionar las {count} publicaciones que coinciden.
+                            </button>
+                        )}
+                    </div>
                     <div className="flex gap-2">
                         <button onClick={() => handleBulkAction(true)} className="px-3 py-1 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700">Activar Sincro</button>
                         <button onClick={() => handleBulkAction(false)} className="px-3 py-1 bg-yellow-600 text-white text-sm font-semibold rounded-md hover:bg-yellow-700">Desactivar Sincro</button>
@@ -198,7 +247,7 @@ const PublicationsView = () => {
 
             <div className="bg-gray-800 border border-gray-700 rounded-lg">
                 <div className="p-4 flex items-center border-b border-gray-700">
-                    <input type="checkbox" onChange={handleSelectAll} checked={publications.length > 0 && selectedPublications.size === publications.length} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
+                    <input type="checkbox" onChange={handleSelectAllOnPage} checked={isAllOnPageSelected} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
                     <span className="ml-3 text-sm font-medium text-gray-300">Seleccionar todo en esta página</span>
                 </div>
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando publicaciones...</p> ) : (
