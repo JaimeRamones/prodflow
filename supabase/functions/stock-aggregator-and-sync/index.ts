@@ -10,26 +10,59 @@ const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 );
 
-// --- SE ELIMINÓ LA FUNCIÓN normalizeSku ---
+const normalizeSku = (sku: string | null): string => {
+    if (!sku) return '';
+    const nonBreakingSpace = new RegExp(String.fromCharCode(160), 'g');
+    return sku.replace(nonBreakingSpace, ' ').trim().replace(/\s+/g, ' ');
+};
 
 serve(async (_req) => {
   try {
     console.log("Iniciando el proceso de agregación y sincronización de stock y precios.");
 
-    const { data: ownProducts, error: ownProductsError } = await supabaseAdmin.from('products').select(`sku, cost_price, stock_disponible, supplier:suppliers(markup)`).filter('sku', 'not.is', null);
+    // --- INICIO DE LA CORRECCIÓN ---
+    // Usamos el poder de los 'joins' de Supabase ahora que la BBDD está corregida.
+    // Esto es más simple y robusto.
+    const { data: ownProducts, error: ownProductsError } = await supabaseAdmin
+      .from('products')
+      .select(`sku, cost_price, stock_disponible, supplier:suppliers(markup)`)
+      .filter('sku', 'not.is', null);
     if (ownProductsError) throw new Error(`Error al obtener productos propios: ${ownProductsError.message}`);
 
-    const { data: supplierStockItems, error: supplierStockError } = await supabaseAdmin.from('supplier_stock_items').select(`sku, cost_price, quantity, warehouse:warehouses(supplier:suppliers(markup))`);
+    const { data: supplierStockItems, error: supplierStockError } = await supabaseAdmin
+      .from('supplier_stock_items')
+      .select(`sku, cost_price, quantity, warehouse:warehouses(supplier:suppliers(markup))`)
+      .filter('sku', 'not.is', null);
     if (supplierStockError) throw new Error(`Error al obtener stock de proveedores: ${supplierStockError.message}`);
 
+    // Mapeamos los datos de forma consistente
     const allSourceProducts = [
-        ...ownProducts.map(p => ({ ...p, supplier_markup: p.supplier?.markup, type: 'own' })),
-        ...supplierStockItems.map(i => ({ ...i, supplier_markup: i.warehouse?.supplier?.markup, stock_disponible: i.quantity, type: 'supplier' }))
+        ...(ownProducts || []).map(p => ({
+            sku: p.sku,
+            cost_price: p.cost_price,
+            stock_disponible: p.stock_disponible,
+            supplier_markup: p.supplier?.markup,
+            type: 'propio'
+        })),
+        ...(supplierStockItems || []).map(i => ({
+            sku: i.sku,
+            cost_price: i.cost_price,
+            stock_disponible: i.quantity,
+            supplier_markup: i.warehouse?.supplier?.markup,
+            type: 'proveedor'
+        }))
     ];
+    // --- FIN DE LA CORRECCIÓN ---
+
+    console.log(`Se procesarán ${allSourceProducts.length} items base (propios y de proveedores).`);
 
     let allVirtualProducts = [];
     for (const sourceProduct of allSourceProducts) {
-      if (!sourceProduct.supplier_markup || sourceProduct.cost_price <= 0) continue;
+      if (!sourceProduct.supplier_markup || sourceProduct.cost_price <= 0) {
+        // Este log nos dirá si algún producto sigue siendo ignorado
+        console.warn(`SKU '${sourceProduct.sku}' ignorado. Razón: sin markup (${sourceProduct.supplier_markup}) o costo inválido (${sourceProduct.cost_price}).`);
+        continue;
+      }
       try {
         const { data: virtuals, error: engineError } = await supabaseAdmin.functions.invoke('product-rules-engine', { body: { product: { sku: sourceProduct.sku, cost_price: sourceProduct.cost_price, stock_disponible: sourceProduct.stock_disponible }, supplier: { markup: sourceProduct.supplier_markup } } });
         if (engineError) throw engineError;
@@ -38,10 +71,10 @@ serve(async (_req) => {
     }
     
     const aggregatedProducts = allVirtualProducts.reduce((acc, p) => {
-      // Usamos el SKU tal cual viene, sin normalizar
-      if (!acc[p.sku]) { acc[p.sku] = { sku: p.sku, price: p.price, stock: 0 }; }
-      acc[p.sku].stock += p.stock;
-      acc[p.sku].price = Math.min(acc[p.sku].price, p.price);
+      const cleanSku = normalizeSku(p.sku);
+      if (!acc[cleanSku]) { acc[cleanSku] = { sku: cleanSku, price: p.price, stock: 0 }; }
+      acc[cleanSku].stock += p.stock;
+      acc[cleanSku].price = Math.min(acc[cleanSku].price, p.price);
       return acc;
     }, {});
     
@@ -54,14 +87,13 @@ serve(async (_req) => {
     if (new Date(tokenData.expires_at) < new Date()) {
       accessToken = await getRefreshedToken(tokenData.refresh_token, tokenData.user_id, supabaseAdmin);
     }
-
     const { data: allListings } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, sku, price, available_quantity, status, sync_enabled');
 
     for (const finalProduct of finalProductsToSync) {
       const { sku, price: newSalePrice } = finalProduct;
+      const cleanSkuForComparison = normalizeSku(sku);
       
-      // La comparación ahora es directa, respetando los espacios
-      const listingToUpdate = (allListings || []).find(l => l.sku === sku);
+      const listingToUpdate = (allListings || []).find(l => normalizeSku(l.sku) === cleanSkuForComparison);
       
       if (!listingToUpdate) continue;
       if (listingToUpdate.sync_enabled === false) continue;
