@@ -6,13 +6,9 @@ import { corsHeaders } from '../_shared/cors.ts'
 import * as xlsx from 'https://esm.sh/xlsx@0.18.5'
 
 async function getDropboxAccessToken() {
-    const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')
-    const appKey = Deno.env.get('DROPBOX_APP_KEY')
-    const appSecret = Deno.env.get('DROPBOX_APP_SECRET')
-
-    if (!refreshToken || !appKey || !appSecret) {
-        throw new Error('Faltan secretos de Dropbox en la configuración.');
-    }
+    const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')!
+    const appKey = Deno.env.get('DROPBOX_APP_KEY')!
+    const appSecret = Deno.env.get('DROPBOX_APP_SECRET')!
 
     const response = await fetch('https://api.dropbox.com/oauth2/token', {
         method: 'POST',
@@ -27,7 +23,6 @@ async function getDropboxAccessToken() {
 
     if (!response.ok) {
         const errorBody = await response.json();
-        console.error("Error al refrescar el token de Dropbox:", errorBody);
         throw new Error(`No se pudo obtener un nuevo access token de Dropbox: ${errorBody.error_description}`);
     }
 
@@ -37,20 +32,13 @@ async function getDropboxAccessToken() {
 
 serve(async (_req) => {
     try {
-        const supabaseAdmin = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-        );
-        
+        const supabaseAdmin = createClient( Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')! );
         const dropboxToken = await getDropboxAccessToken();
-
         console.log("Iniciando el procesamiento de archivos de Dropbox.");
 
         const { data: warehouses } = await supabaseAdmin.from('warehouses').select('id, name').eq('type', 'proveedor');
         if (!warehouses || warehouses.length === 0) {
-            return new Response(JSON.stringify({ message: "No se encontraron almacenes de tipo 'proveedor'." }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
-            });
+            return new Response(JSON.stringify({ message: "No se encontraron almacenes." }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
         }
 
         const supplierHeaderConfig = {
@@ -66,12 +54,11 @@ serve(async (_req) => {
             headers: { 'Authorization': `Bearer ${dropboxToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: '' }),
         });
-
         if (!listFilesResponse.ok) throw new Error('Error al listar archivos de Dropbox.');
 
         const filesData = await listFilesResponse.json();
         const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.xlsx')));
-
+        
         for (const file of stockFileEntries) {
             const providerName = file.name.replace(/\.(txt|csv|xlsx)$/i, '');
             const warehouse = warehouses.find(w => w.name.toLowerCase() === providerName.toLowerCase());
@@ -167,15 +154,9 @@ serve(async (_req) => {
             }
         }
 
-        return new Response(JSON.stringify({ success: true, message: "Archivos de Dropbox procesados." }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-
+        return new Response(JSON.stringify({ success: true, message: "Archivos de Dropbox procesados." }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
     } catch (error) {
         console.error('Error en la función dropbox-file-processor:', error.message);
-        return new Response(JSON.stringify({ error: error.message }), {
-            status: 500,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
     }
 });
