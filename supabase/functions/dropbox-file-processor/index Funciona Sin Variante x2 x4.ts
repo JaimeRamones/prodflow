@@ -1,4 +1,5 @@
 // Ruta: supabase/functions/dropbox-file-processor/index.ts
+// VERSIÓN UNIFICADA FINAL
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
@@ -105,7 +106,7 @@ serve(async (_req) => {
                 };
                 
                 if (Object.values(headerMap).some(index => index === -1)) {
-                    console.error(`Archivo '${file.name}' ignorado. Faltan cabeceras requeridas para ${providerName}.`);
+                    console.error(`Archivo '${file.name}' ignorado. No se encontraron todas las cabeceras requeridas para ${providerName}.`);
                     continue;
                 }
 
@@ -118,7 +119,7 @@ serve(async (_req) => {
                         itemsToInsert.push({ warehouse_id: warehouse.id, sku, quantity, cost_price, last_updated: new Date().toISOString() });
                     }
                 }
-            } else { 
+            } else { // Lógica para .txt y .csv
                 const fileContent = await downloadResponse.text();
                 const lines = fileContent.split(/\r?\n/);
                 for (const line of lines) {
