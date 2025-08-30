@@ -1,116 +1,116 @@
-// Ruta: supabase/functions/product-rules-engine/index.ts
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
+// supabase/functions/stock-aggregator-and-sync/index.ts
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getRefreshedToken } from '../_shared/meli_token.ts'
 
-interface Product {
-  sku: string;
-  cost_price: number;
-  stock_disponible: number;
-  supplier_id: string;
-}
+const supabaseAdmin = createClient(
+  Deno.env.get('SUPABASE_URL') ?? '',
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+);
 
-interface Supplier {
-  markup: number;
-}
+const normalizeSku = (sku: string | null): string => {
+    if (!sku) return '';
+    const nonBreakingSpace = new RegExp(String.fromCharCode(160), 'g');
+    return sku.replace(nonBreakingSpace, ' ').trim().replace(/\s+/g, ' ');
+};
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
+serve(async (_req) => {
   try {
-    const { product, supplier } = await req.json() as { product: Product, supplier: Supplier };
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    console.log("Iniciando el proceso de agregación y sincronización de stock y precios.");
 
-    // 1. OBTENER TODAS LAS REGLAS DE NEGOCIO ACTIVAS DE LA BASE DE DATOS
-    const { data: rulesData, error: rulesError } = await supabaseAdmin
-      .from('business_rules')
-      .select('rule_type, config')
-      .eq('is_active', true);
+    const { data: ownProducts } = await supabaseAdmin.from('products').select(`sku, cost_price, stock_disponible, supplier:suppliers(markup)`).filter('sku', 'not.is', null);
+    const { data: supplierStockItems } = await supabaseAdmin.from('supplier_stock_items').select(`sku, cost_price, quantity, warehouse:warehouses(supplier:suppliers(markup))`).filter('sku', 'not.is', null);
 
-    if (rulesError) throw rulesError;
+    const allSourceProducts = [
+        ...(ownProducts || []).map(p => ({ ...p, supplier_markup: p.supplier?.markup, type: 'propio' })),
+        ...(supplierStockItems || []).map(i => ({ ...i, supplier_markup: i.warehouse?.supplier?.markup, stock_disponible: i.quantity, type: 'proveedor' }))
+    ];
 
-    // 2. PROCESAR Y ORGANIZAR LAS REGLAS PARA FÁCIL ACCESO
-    const rules = rulesData.reduce((acc, rule) => {
-      acc[rule.rule_type] = rule.config;
+    let allVirtualProducts = [];
+    for (const sourceProduct of allSourceProducts) {
+      if (!sourceProduct.supplier_markup || !sourceProduct.cost_price || sourceProduct.cost_price <= 0) continue;
+      try {
+        const { data: virtuals } = await supabaseAdmin.functions.invoke('product-rules-engine', { body: { product: { sku: sourceProduct.sku, cost_price: sourceProduct.cost_price, stock_disponible: sourceProduct.stock_disponible }, supplier: { markup: sourceProduct.supplier_markup } } });
+        if (virtuals) {
+            // Añadimos la fuente a cada producto virtual para depuración
+            allVirtualProducts.push(...virtuals.map(v => ({...v, source_type: sourceProduct.type, source_cost: sourceProduct.cost_price })));
+        }
+      } catch (e) { console.error(`Error en el motor de reglas para el SKU ${sourceProduct.sku}:`, e.message); }
+    }
+    
+    // --- INICIO DE LA DEPURACIÓN AVANZADA DE PRECIOS ---
+    console.log("--- DEPURACIÓN DE PRECIOS PARA 'ACONTI CT 1126' ---");
+    const acontiVirtuals = allVirtualProducts.filter(p => normalizeSku(p.sku) === 'ACONTI CT 1126');
+    if (acontiVirtuals.length > 0) {
+        console.log(`Se encontraron ${acontiVirtuals.length} versiones de ACONTI CT 1126 antes de agregar:`);
+        acontiVirtuals.forEach(p => {
+            console.log(`  -> Origen: ${p.source_type}, Costo de Origen: ${p.source_cost}, Precio de Venta Calculado: ${p.price}`);
+        });
+    } else {
+        console.log("No se generó ningún producto virtual para ACONTI CT 1126.");
+    }
+    // --- FIN DE LA DEPURACIÓN ---
+
+    const aggregatedProducts = allVirtualProducts.reduce((acc, p) => {
+      const cleanSku = normalizeSku(p.sku);
+      if (!acc[cleanSku]) { acc[cleanSku] = { sku: cleanSku, price: p.price, stock: 0 }; }
+      acc[cleanSku].stock += p.stock;
+      acc[cleanSku].price = Math.min(acc[cleanSku].price, p.price);
       return acc;
     }, {});
     
-    // Asignar configuraciones con valores por defecto por si no existen
-    const premiumFeeConfig = rules.premium_fee || { fee_percentage: 0 };
-    const kitConfig = rules.kit_config || { apply_to_all: false, multipliers: [], excluded_prefixes: [] };
-    const specialRulesConfig = rules.special_rules || { rules: [] };
+    const finalProductsToSync = Object.values(aggregatedProducts);
 
-    // 3. CALCULAR EL PRECIO DE VENTA BASE
-    // Se usa el markup del proveedor que llega como parámetro.
-    const baseSalePrice = product.cost_price * (1 + (supplier.markup / 100));
-
-    let generatedProducts = [];
-
-    // Producto base (sin sufijos de kit)
-    const baseProduct = {
-      sku: product.sku,
-      price: parseFloat(baseSalePrice.toFixed(2)),
-      stock: product.stock_disponible,
-      component_sku: product.sku, // Guardamos referencia al SKU original
-      kit_multiplier: 1
-    };
-    generatedProducts.push(baseProduct);
-
-    // 4. GENERAR KITS (/Xn)
-    const shouldApplyKits = kitConfig.apply_to_all && !kitConfig.excluded_prefixes.some(prefix => product.sku.startsWith(prefix));
-
-    if (shouldApplyKits) {
-      kitConfig.multipliers.forEach(multiplier => {
-        if (multiplier > 1) { // El multiplicador 1 ya es el producto base
-          generatedProducts.push({
-            sku: `${product.sku}/X${multiplier}`,
-            price: parseFloat((baseSalePrice * multiplier).toFixed(2)),
-            stock: Math.floor(product.stock_disponible / multiplier),
-            component_sku: product.sku,
-            kit_multiplier: multiplier
-          });
+    // ... (El resto del código de sincronización con ML no necesita cambios)
+    const { data: tokenData } = await supabaseAdmin.from('meli_credentials').select('*').single();
+    if (!tokenData) throw new Error("No se encontraron credenciales de Mercado Libre.");
+    let accessToken = tokenData.access_token;
+    if (new Date(tokenData.expires_at) < new Date()) {
+      accessToken = await getRefreshedToken(tokenData.refresh_token, tokenData.user_id, supabaseAdmin);
+    }
+    const { data: allListings } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, sku, price, available_quantity, status');
+    for (const finalProduct of finalProductsToSync) {
+      const { sku, price: newSalePrice } = finalProduct;
+      const cleanSkuForComparison = normalizeSku(sku);
+      const listingToUpdate = (allListings || []).find(l => normalizeSku(l.sku) === cleanSkuForComparison);
+      if (!listingToUpdate) continue;
+      const publishableStock = Math.max(0, finalProduct.stock);
+      const payload: { available_quantity?: number, price?: number, status?: string } = {};
+      let needsUpdate = false;
+      if (listingToUpdate.available_quantity !== publishableStock) {
+          payload.available_quantity = publishableStock;
+          needsUpdate = true;
+      }
+      if (newSalePrice && Math.abs(listingToUpdate.price - newSalePrice) > 0.01) {
+          payload.price = newSalePrice;
+          needsUpdate = true;
+      }
+      const newStatus = publishableStock > 0 ? 'active' : 'paused';
+      if (listingToUpdate.status !== newStatus) {
+          payload.status = newStatus;
+          needsUpdate = true;
+      }
+      if (needsUpdate) {
+        console.log(`Actualizando publicación para SKU "${sku}" (${listingToUpdate.meli_id}) en ML con:`, payload);
+        const response = await fetch(`https://api.mercadolibre.com/items/${listingToUpdate.meli_id}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          console.error(`Fallo al actualizar ${listingToUpdate.meli_id}:`, await response.json());
+        } else {
+          console.log(`Publicación ${listingToUpdate.meli_id} actualizada en ML con éxito.`);
+          await supabaseAdmin.from('mercadolibre_listings').update({ ...payload, last_synced_at: new Date().toISOString() }).eq('meli_id', listingToUpdate.meli_id);
         }
-      });
+      }
     }
 
-    // 5. GENERAR VERSIONES PREMIUM (-PR) Y APLICAR REGLAS ESPECIALES
-    const finalProducts = [];
-    generatedProducts.forEach(p => {
-      // Añadir la versión normal a la lista final
-      finalProducts.push(p);
-
-      // Crear y añadir la versión Premium
-      finalProducts.push({
-        ...p,
-        sku: `${p.sku}-PR`,
-        price: parseFloat((p.price * (1 + (premiumFeeConfig.fee_percentage / 100))).toFixed(2)),
-      });
-    });
-
-    // Aplicar reglas especiales a toda la lista final
-    const productsWithSpecialRules = finalProducts.map(p => {
-      const specialRule = specialRulesConfig.rules.find(rule => p.sku.startsWith(rule.prefix));
-      if (specialRule) {
-        return {
-          ...p,
-          price: parseFloat((p.price * specialRule.price_multiplier).toFixed(2))
-        };
-      }
-      return p;
-    });
-
-    return new Response(JSON.stringify(productsWithSpecialRules), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    });
-
+    return new Response(JSON.stringify({ success: true, message: "Sincronización de stock y precios completada." }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
   } catch (error) {
-    console.error('Error in product-rules-engine:', error.message);
+    console.error('Error en la función stock-aggregator-and-sync:', error.message);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
