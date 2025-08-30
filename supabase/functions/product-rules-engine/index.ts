@@ -34,25 +34,11 @@ serve(async (_req) => {
       try {
         const { data: virtuals } = await supabaseAdmin.functions.invoke('product-rules-engine', { body: { product: { sku: sourceProduct.sku, cost_price: sourceProduct.cost_price, stock_disponible: sourceProduct.stock_disponible }, supplier: { markup: sourceProduct.supplier_markup } } });
         if (virtuals) {
-            // Añadimos la fuente a cada producto virtual para depuración
             allVirtualProducts.push(...virtuals.map(v => ({...v, source_type: sourceProduct.type, source_cost: sourceProduct.cost_price })));
         }
       } catch (e) { console.error(`Error en el motor de reglas para el SKU ${sourceProduct.sku}:`, e.message); }
     }
     
-    // --- INICIO DE LA DEPURACIÓN AVANZADA DE PRECIOS ---
-    console.log("--- DEPURACIÓN DE PRECIOS PARA 'ACONTI CT 1126' ---");
-    const acontiVirtuals = allVirtualProducts.filter(p => normalizeSku(p.sku) === 'ACONTI CT 1126');
-    if (acontiVirtuals.length > 0) {
-        console.log(`Se encontraron ${acontiVirtuals.length} versiones de ACONTI CT 1126 antes de agregar:`);
-        acontiVirtuals.forEach(p => {
-            console.log(`  -> Origen: ${p.source_type}, Costo de Origen: ${p.source_cost}, Precio de Venta Calculado: ${p.price}`);
-        });
-    } else {
-        console.log("No se generó ningún producto virtual para ACONTI CT 1126.");
-    }
-    // --- FIN DE LA DEPURACIÓN ---
-
     const aggregatedProducts = allVirtualProducts.reduce((acc, p) => {
       const cleanSku = normalizeSku(p.sku);
       if (!acc[cleanSku]) { acc[cleanSku] = { sku: cleanSku, price: p.price, stock: 0 }; }
@@ -63,7 +49,6 @@ serve(async (_req) => {
     
     const finalProductsToSync = Object.values(aggregatedProducts);
 
-    // ... (El resto del código de sincronización con ML no necesita cambios)
     const { data: tokenData } = await supabaseAdmin.from('meli_credentials').select('*').single();
     if (!tokenData) throw new Error("No se encontraron credenciales de Mercado Libre.");
     let accessToken = tokenData.access_token;

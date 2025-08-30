@@ -10,11 +10,7 @@ const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 );
 
-const normalizeSku = (sku: string | null): string => {
-    if (!sku) return '';
-    const nonBreakingSpace = new RegExp(String.fromCharCode(160), 'g');
-    return sku.replace(nonBreakingSpace, ' ').trim().replace(/\s+/g, ' ');
-};
+// --- SE ELIMINÓ LA FUNCIÓN normalizeSku ---
 
 serve(async (_req) => {
   try {
@@ -23,7 +19,7 @@ serve(async (_req) => {
     const { data: ownProducts, error: ownProductsError } = await supabaseAdmin.from('products').select(`sku, cost_price, stock_disponible, supplier:suppliers(markup)`).filter('sku', 'not.is', null);
     if (ownProductsError) throw new Error(`Error al obtener productos propios: ${ownProductsError.message}`);
 
-    const { data: supplierStockItems, error: supplierStockError } = await supabaseAdmin.from('supplier_stock_items').select(`sku, cost_price, quantity, warehouse:warehouses(supplier:suppliers(markup))`).filter('sku', 'not.is', null);
+    const { data: supplierStockItems, error: supplierStockError } = await supabaseAdmin.from('supplier_stock_items').select(`sku, cost_price, quantity, warehouse:warehouses(supplier:suppliers(markup))`);
     if (supplierStockError) throw new Error(`Error al obtener stock de proveedores: ${supplierStockError.message}`);
 
     const allSourceProducts = [
@@ -42,10 +38,10 @@ serve(async (_req) => {
     }
     
     const aggregatedProducts = allVirtualProducts.reduce((acc, p) => {
-      const cleanSku = normalizeSku(p.sku);
-      if (!acc[cleanSku]) { acc[cleanSku] = { sku: cleanSku, price: p.price, stock: 0 }; }
-      acc[cleanSku].stock += p.stock;
-      acc[cleanSku].price = Math.min(acc[cleanSku].price, p.price);
+      // Usamos el SKU tal cual viene, sin normalizar
+      if (!acc[p.sku]) { acc[p.sku] = { sku: p.sku, price: p.price, stock: 0 }; }
+      acc[p.sku].stock += p.stock;
+      acc[p.sku].price = Math.min(acc[p.sku].price, p.price);
       return acc;
     }, {});
     
@@ -59,61 +55,45 @@ serve(async (_req) => {
       accessToken = await getRefreshedToken(tokenData.refresh_token, tokenData.user_id, supabaseAdmin);
     }
 
+    const { data: allListings } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, sku, price, available_quantity, status, sync_enabled');
+
     for (const finalProduct of finalProductsToSync) {
       const { sku, price: newSalePrice } = finalProduct;
-      const cleanSkuForComparison = normalizeSku(sku);
+      
+      // La comparación ahora es directa, respetando los espacios
+      const listingToUpdate = (allListings || []).find(l => l.sku === sku);
+      
+      if (!listingToUpdate) continue;
+      if (listingToUpdate.sync_enabled === false) continue;
 
-      // --- INICIO DE LA CORRECCIÓN ---
-      // Volvemos a la búsqueda individual por SKU dentro del bucle.
-      // Es la forma más segura de encontrar la publicación correcta, ignorando mayúsculas/minúsculas.
-      const { data: listingsToUpdate, error: findError } = await supabaseAdmin
-        .from('mercadolibre_listings')
-        .select('meli_id, price, available_quantity, status, sync_enabled')
-        .ilike('sku', cleanSkuForComparison); // Usamos ilike para case-insensitive
-
-      if (findError) {
-          console.error(`Error buscando la publicación para el SKU ${cleanSkuForComparison}: ${findError.message}`);
-          continue;
+      const publishableStock = Math.max(0, finalProduct.stock);
+      const payload: { available_quantity?: number, price?: number, status?: string } = {};
+      let needsUpdate = false;
+      if (listingToUpdate.available_quantity !== publishableStock) {
+          payload.available_quantity = publishableStock;
+          needsUpdate = true;
       }
-      // --- FIN DE LA CORRECCIÓN ---
-
-      if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
-
-      for (const listing of listingsToUpdate) {
-        // Ignorar si la sincronización está desactivada manualmente para esta publicación
-        if (listing.sync_enabled === false) continue;
-
-        const publishableStock = Math.max(0, finalProduct.stock);
-        const payload: { available_quantity?: number, price?: number, status?: string } = {};
-        let needsUpdate = false;
-        
-        if (listing.available_quantity !== publishableStock) {
-            payload.available_quantity = publishableStock;
-            needsUpdate = true;
-        }
-        if (newSalePrice && Math.abs(listing.price - newSalePrice) > 0.01) {
-            payload.price = newSalePrice;
-            needsUpdate = true;
-        }
-        const newStatus = publishableStock > 0 ? 'active' : 'paused';
-        if (listing.status !== newStatus) {
-            payload.status = newStatus;
-            needsUpdate = true;
-        }
-
-        if (needsUpdate) {
-          console.log(`Actualizando publicación para SKU "${sku}" (${listing.meli_id}) en ML con:`, payload);
-          const response = await fetch(`https://api.mercadolibre.com/items/${listing.meli_id}`, {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          if (!response.ok) {
-            console.error(`Fallo al actualizar ${listing.meli_id}:`, await response.json());
-          } else {
-            console.log(`Publicación ${listing.meli_id} actualizada en ML con éxito.`);
-            await supabaseAdmin.from('mercadolibre_listings').update({ ...payload, last_synced_at: new Date().toISOString() }).eq('meli_id', listing.meli_id);
-          }
+      if (newSalePrice && Math.abs(listingToUpdate.price - newSalePrice) > 0.01) {
+          payload.price = newSalePrice;
+          needsUpdate = true;
+      }
+      const newStatus = publishableStock > 0 ? 'active' : 'paused';
+      if (listingToUpdate.status !== newStatus) {
+          payload.status = newStatus;
+          needsUpdate = true;
+      }
+      if (needsUpdate) {
+        console.log(`Actualizando publicación para SKU "${sku}" (${listingToUpdate.meli_id}) en ML con:`, payload);
+        const response = await fetch(`https://api.mercadolibre.com/items/${listingToUpdate.meli_id}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          console.error(`Fallo al actualizar ${listingToUpdate.meli_id}:`, await response.json());
+        } else {
+          console.log(`Publicación ${listingToUpdate.meli_id} actualizada en ML con éxito.`);
+          await supabaseAdmin.from('mercadolibre_listings').update({ ...payload, last_synced_at: new Date().toISOString() }).eq('meli_id', listingToUpdate.meli_id);
         }
       }
     }
