@@ -172,7 +172,9 @@ const PublicationsView = () => {
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Estado de Sincronización</label>
                         <select value={syncFilter} onChange={(e) => setSyncFilter(e.target.value)} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white">
-                            <option value="">Todos</o`tengo un problema con esto las SKU de Rodamet si me sincroniza precio y stock. pero los el rodamitre no. en los logs aparece como que pasa toda la info bien. carga todos los datos en la planilla sku precio y stock. pero lo refleja en mercado libre. los logs aparecen sku de Rodamet pero no de rodamitre. pero carga la planilla`ption><option value="true">En Sincro</option><option value="false">Fuera de Sincro</option>
+                            <option value="">Todos</option>
+                            <option value="true">En Sincro</option>
+                            <option value="false">Fuera de Sincro</option>
                         </select>
                     </div>
                     <div>
@@ -223,7 +225,7 @@ const PublicationsView = () => {
                                 </div>
                                 <div className="flex-shrink-0 pl-2">
                                     <div className="flex items-center gap-3">
-                                        <ToggleSwitch checked={pub.sync_enabled} onChange={() => handleSyncToggle(pub)} />
+                                        <ToggleSwitch checked={pub.sync_enabled === null ? true : pub.sync_enabled} onChange={() => handleSyncToggle(pub)} />
                                         <button onClick={() => setEditingPublication(pub)} className="p-2 text-gray-400 hover:text-white" title="Editar SKU y Precio">
                                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L16.732 3.732z"></path></svg>
                                         </button>
