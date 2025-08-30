@@ -1,7 +1,7 @@
 // supabase/functions/stock-aggregator-and-sync/index.ts
 
-import { serve } from 'https'
-import { createClient } from 'https'
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 import { getRefreshedToken } from '../_shared/meli_token.ts'
 
@@ -10,7 +10,6 @@ const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 );
 
-// Función de limpieza: Reemplaza caracteres de espacio no estándar y normaliza los espacios
 const normalizeSku = (sku: string | null): string => {
     if (!sku) return '';
     const nonBreakingSpace = new RegExp(String.fromCharCode(160), 'g');
@@ -60,47 +59,61 @@ serve(async (_req) => {
       accessToken = await getRefreshedToken(tokenData.refresh_token, tokenData.user_id, supabaseAdmin);
     }
 
-    const { data: allListings } = await supabaseAdmin.from('mercadolibre_listings').select('meli_id, sku, price, available_quantity, status, sync_enabled');
-
     for (const finalProduct of finalProductsToSync) {
       const { sku, price: newSalePrice } = finalProduct;
       const cleanSkuForComparison = normalizeSku(sku);
 
-      // --- INICIO DE LA MODIFICACIÓN ---
-      // Filtramos la lista para encontrar solo la publicación que coincide Y tiene la sincro activada
-      const listingToUpdate = (allListings || []).find(l => normalizeSku(l.sku) === cleanSkuForComparison && l.sync_enabled === true);
-      // --- FIN DE LA MODIFICACIÓN ---
-      
-      if (!listingToUpdate) continue; // Si no la encuentra o la sincro está apagada, la ignora
+      // --- INICIO DE LA CORRECCIÓN ---
+      // Volvemos a la búsqueda individual por SKU dentro del bucle.
+      // Es la forma más segura de encontrar la publicación correcta, ignorando mayúsculas/minúsculas.
+      const { data: listingsToUpdate, error: findError } = await supabaseAdmin
+        .from('mercadolibre_listings')
+        .select('meli_id, price, available_quantity, status, sync_enabled')
+        .ilike('sku', cleanSkuForComparison); // Usamos ilike para case-insensitive
 
-      const publishableStock = Math.max(0, finalProduct.stock);
-      const payload: { available_quantity?: number, price?: number, status?: string } = {};
-      let needsUpdate = false;
-      if (listingToUpdate.available_quantity !== publishableStock) {
-          payload.available_quantity = publishableStock;
-          needsUpdate = true;
+      if (findError) {
+          console.error(`Error buscando la publicación para el SKU ${cleanSkuForComparison}: ${findError.message}`);
+          continue;
       }
-      if (newSalePrice && Math.abs(listingToUpdate.price - newSalePrice) > 0.01) {
-          payload.price = newSalePrice;
-          needsUpdate = true;
-      }
-      const newStatus = publishableStock > 0 ? 'active' : 'paused';
-      if (listingToUpdate.status !== newStatus) {
-          payload.status = newStatus;
-          needsUpdate = true;
-      }
-      if (needsUpdate) {
-        console.log(`Actualizando publicación para SKU "${sku}" (${listingToUpdate.meli_id}) en ML con:`, payload);
-        const response = await fetch(`https://api.mercadolibre.com/items/${listingToUpdate.meli_id}`, {
-          method: 'PUT',
-          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!response.ok) {
-          console.error(`Fallo al actualizar ${listingToUpdate.meli_id}:`, await response.json());
-        } else {
-          console.log(`Publicación ${listingToUpdate.meli_id} actualizada en ML con éxito.`);
-          await supabaseAdmin.from('mercadolibre_listings').update({ ...payload, last_synced_at: new Date().toISOString() }).eq('meli_id', listingToUpdate.meli_id);
+      // --- FIN DE LA CORRECCIÓN ---
+
+      if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
+
+      for (const listing of listingsToUpdate) {
+        // Ignorar si la sincronización está desactivada manualmente para esta publicación
+        if (listing.sync_enabled === false) continue;
+
+        const publishableStock = Math.max(0, finalProduct.stock);
+        const payload: { available_quantity?: number, price?: number, status?: string } = {};
+        let needsUpdate = false;
+        
+        if (listing.available_quantity !== publishableStock) {
+            payload.available_quantity = publishableStock;
+            needsUpdate = true;
+        }
+        if (newSalePrice && Math.abs(listing.price - newSalePrice) > 0.01) {
+            payload.price = newSalePrice;
+            needsUpdate = true;
+        }
+        const newStatus = publishableStock > 0 ? 'active' : 'paused';
+        if (listing.status !== newStatus) {
+            payload.status = newStatus;
+            needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+          console.log(`Actualizando publicación para SKU "${sku}" (${listing.meli_id}) en ML con:`, payload);
+          const response = await fetch(`https://api.mercadolibre.com/items/${listing.meli_id}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            console.error(`Fallo al actualizar ${listing.meli_id}:`, await response.json());
+          } else {
+            console.log(`Publicación ${listing.meli_id} actualizada en ML con éxito.`);
+            await supabaseAdmin.from('mercadolibre_listings').update({ ...payload, last_synced_at: new Date().toISOString() }).eq('meli_id', listing.meli_id);
+          }
         }
       }
     }
