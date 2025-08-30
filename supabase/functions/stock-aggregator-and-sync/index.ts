@@ -90,6 +90,15 @@ serve(async (_req) => {
       if (!listingsToUpdate || listingsToUpdate.length === 0) continue;
 
       for (const listing of listingsToUpdate) {
+        // --- INICIO DEL CÓDIGO DE DEPURACIÓN ---
+        if (sku === 'ACONTI CT 1126') {
+            console.log(`[DEBUG ACONTI] Comparando precios:`);
+            console.log(`  -> Precio en ML (DB local): ${listing.price}`);
+            console.log(`  -> Precio NUEVO calculado: ${newSalePrice}`);
+            console.log(`  -> ¿Son diferentes?: ${Math.abs(listing.price - newSalePrice) > 0.01}`);
+        }
+        // --- FIN DEL CÓDIGO DE DEPURACIÓN ---
+
         const payload: { available_quantity?: number, price?: number, status?: string } = {};
         let needsUpdate = false;
 
@@ -97,15 +106,10 @@ serve(async (_req) => {
             payload.available_quantity = publishableStock;
             needsUpdate = true;
         }
-
-        // --- INICIO DE LA CORRECCIÓN ---
-        // Añadimos la lógica para verificar y agregar el precio a la actualización
         if (newSalePrice && Math.abs(listing.price - newSalePrice) > 0.01) {
             payload.price = newSalePrice;
             needsUpdate = true;
         }
-        // --- FIN DE LA CORRECCIÓN ---
-
         const newStatus = publishableStock > 0 ? 'active' : 'paused';
         if (listing.status !== newStatus) {
             payload.status = newStatus;
