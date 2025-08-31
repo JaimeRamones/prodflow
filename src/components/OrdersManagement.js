@@ -1,3 +1,4 @@
+// Ruta: src/components/OrdersManagement.js
 import React, { useState, useContext, useEffect } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
@@ -7,7 +8,8 @@ import PendingOrdersTable from './PendingOrdersTable';
 import SupplierOrdersTable from './SupplierOrdersTable';
 import ToggleSwitch from './ToggleSwitch';
 import PurchaseOrderModal from './PurchaseOrderModal';
-import NewSaleForm from './NewSaleForm'; // Asumimos que este archivo existe
+import NewSaleForm from './NewSaleForm';
+import WarehouseOrdersTable from './WarehouseOrdersTable'; // <-- AÑADIDO
 
 // --- SUB-COMPONENTE PARA EL HISTORIAL DE OC (de tu archivo original) ---
 const PurchaseOrderHistory = () => {
@@ -144,6 +146,12 @@ const OrdersManagement = () => {
                 <PendingOrdersTable title="Pedidos Mercado Envíos Pendientes" orders={pendingMercadoEnvios} />
                 <PendingOrdersTable title="Pedidos Flex Pendientes" orders={pendingFlex} />
             </div>
+            
+            {/* --- NUEVA SECCIÓN AÑADIDA --- */}
+            <div className="mt-8">
+                <WarehouseOrdersTable />
+            </div>
+
             <SupplierOrdersTable />
             <PurchaseOrderHistory />
         </div>
