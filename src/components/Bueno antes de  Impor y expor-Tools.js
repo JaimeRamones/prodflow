@@ -1,5 +1,5 @@
 // Ruta: src/components/Tools.js
-import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 
@@ -222,8 +222,9 @@ const BulkPriceUpdater = () => {
     );
 };
 
+// --- INICIO DEL NUEVO CÓDIGO ---
 
-// --- HERRAMIENTA 4: MOTOR DE REGLAS DE NEGOCIO (LIGERAMENTE ACTUALIZADA) ---
+// --- HERRAMIENTA 4: MOTOR DE REGLAS DE NEGOCIO ---
 const RulesManager = () => {
     const { showMessage } = useContext(AppContext);
     const [rules, setRules] = useState([]);
@@ -302,11 +303,11 @@ const RulesManager = () => {
     };
     
     if (isLoading) {
-        return <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md mb-8"><p className="text-center text-gray-400">Cargando Motor de Reglas...</p></div>;
+        return <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md"><p className="text-center text-gray-400">Cargando Motor de Reglas...</p></div>;
     }
 
     return (
-        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md mb-8">
+        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold text-white">4. Motor de Reglas (Kits y Precios Premium)</h3>
                  <button onClick={handleSave} disabled={isSaving} className="px-5 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:opacity-50">
@@ -323,42 +324,6 @@ const RulesManager = () => {
                         case 'special_rules':
                              return (<div key={rule.id}><label className="block text-sm font-medium text-gray-300 mb-1">{rule.rule_name} (JSON)</label><textarea value={JSON.stringify(rule.config, null, 2)} onChange={(e) => handleJsonChange(rule.id, e.target.value)} className="w-full h-32 p-2 bg-gray-900 border-gray-600 rounded-md text-white font-mono" /></div>);
                         default:
-                            // Soporte para la estructura 'Configuración General'
-                             if (rule.rule_type === 'Configuración General') {
-                                return (
-                                    <div key={rule.id} className="col-span-2 space-y-4 p-4 bg-gray-700/50 rounded-lg">
-                                        <h4 className="text-lg font-medium text-white">{rule.rule_name} (Estructura Consolidada)</h4>
-                                        <div className="grid grid-cols-3 gap-4">
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-300 mb-1">Markup Base (%)</label>
-                                                <input type="number" value={rule.config.defaultMarkup || ''} onChange={(e) => handleConfigChange(rule.id, 'defaultMarkup', e.target.value, true)} className="w-full p-2 bg-gray-700 border-gray-600 rounded-md text-white" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-300 mb-1">Markup Premium (%)</label>
-                                                <input type="number" value={rule.config.premiumMarkup || ''} onChange={(e) => handleConfigChange(rule.id, 'premiumMarkup', e.target.value, true)} className="w-full p-2 bg-gray-700 border-gray-600 rounded-md text-white" />
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-300 mb-1">Reglas de Kits (JSON Array)</label>
-                                             <textarea 
-                                                value={JSON.stringify(rule.config.kitRules || [], null, 2)} 
-                                                onChange={(e) => {
-                                                    try {
-                                                        // Intentamos parsear y actualizamos solo si es válido
-                                                        const newKitRules = JSON.parse(e.target.value);
-                                                        handleConfigChange(rule.id, 'kitRules', newKitRules);
-                                                    } catch (err) {
-                                                        console.error("Invalid JSON for kitRules", err);
-                                                        // Idealmente mostrar un indicador de error visual aquí
-                                                    }
-                                                }}
-                                                className="w-full h-32 p-2 bg-gray-900 border-gray-600 rounded-md text-white font-mono" 
-                                                placeholder='[{"quantity": 2, "discount": 5, "suffix": "/X2"}, ...]'
-                                             />
-                                        </div>
-                                    </div>
-                                );
-                            }
                             return null;
                     }
                 })}
@@ -366,187 +331,6 @@ const RulesManager = () => {
         </div>
     );
 }
-
-// --- INICIO DEL NUEVO CÓDIGO ---
-
-// --- HERRAMIENTA 5: MAPEO MASIVO DE SKUS ---
-const SKUMapper = () => {
-    const { showMessage } = useContext(AppContext);
-    const [isExporting, setIsExporting] = useState(false);
-    const [isImporting, setIsImporting] = useState(false);
-    const fileInputRef = useRef(null);
-    const [importResult, setImportResult] = useState(null);
-
-    // Función para Exportar (Descargar CSV) - Llama a bright-handler
-    const handleExport = async () => {
-        setIsExporting(true);
-        setImportResult(null);
-        try {
-            // Invocamos la función 'bright-handler'
-            const { data, error } = await supabase.functions.invoke('bright-handler', {
-                method: 'POST',
-            });
-
-            if (error) {
-                // Intentamos extraer el mensaje de error real si es posible
-                const errorMessage = error.message || 'Error desconocido al invocar la función.';
-                throw new Error(`Error al exportar: ${errorMessage}`);
-            }
-
-            // Manejamos respuestas JSON (ej: si la función devuelve {message: "No hay datos"})
-            // supabase.functions.invoke intenta parsear como JSON por defecto.
-            if (typeof data === 'object' && data !== null && (data.message || data.error)) {
-                 showMessage(data.message || data.error, data.error ? 'error' : 'info');
-                 setIsExporting(false);
-                 return;
-            }
-            
-            // Si no es un objeto JSON con mensaje/error, asumimos que es el contenido CSV (texto plano)
-            const blob = new Blob([data], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.setAttribute('download', 'ProdFlow_Mapeo_SKUs.csv');
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-
-            showMessage("Archivo CSV descargado. Por favor, edita la columna 'sku' y guárdalo.", "success");
-
-        } catch (error) {
-            console.error("Error durante la exportación:", error);
-            showMessage(error.message || "Ocurrió un error inesperado al exportar.", "error");
-        } finally {
-            setIsExporting(false);
-        }
-    };
-
-    // Función para manejar la selección del archivo
-    const handleFileSelect = (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            handleImport(file);
-        }
-        // Resetear el input para permitir subir el mismo archivo de nuevo si es necesario
-        if (fileInputRef.current) {
-            fileInputRef.current.value = "";
-        }
-    };
-
-    // Función para Importar (Subir CSV Corregido) - Llama a rapid-task
-    const handleImport = async (file) => {
-        
-        if (!window.confirm("¿Estás seguro de que deseas importar este archivo? Esto sobrescribirá los SKUs actuales.")) {
-            return;
-        }
-
-        setIsImporting(true);
-        setImportResult(null);
-        try {
-            // Leemos el contenido del archivo como texto
-            const fileContent = await file.text();
-
-            // Invocamos la función 'rapid-task' enviando el contenido del CSV en el cuerpo
-            const { data, error } = await supabase.functions.invoke('rapid-task', {
-                method: 'POST',
-                body: fileContent, // Enviamos el texto plano del CSV
-                headers: {
-                    'Content-Type': 'text/plain', // Indicamos que enviamos texto (la función lo parseará)
-                }
-            });
-
-            if (error) {
-                 const errorMessage = error.message || 'Error desconocido al invocar la función.';
-                 throw new Error(`Error al importar: ${errorMessage}`);
-            }
-
-            // Mostramos el resultado
-            setImportResult(data);
-            if (data.success) {
-                // Mostrar éxito, pero con advertencia si hubo errores parciales
-                showMessage(data.message, data.errors.length > 0 ? "warning" : "success");
-            } else {
-                showMessage(data.error || "Falló la importación.", "error");
-            }
-
-        } catch (error) {
-            console.error("Error durante la importación:", error);
-            showMessage(error.message || "Ocurrió un error inesperado al importar.", "error");
-        } finally {
-            setIsImporting(false);
-        }
-    };
-
-
-    return (
-        <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md mb-8">
-            <h3 className="text-xl font-semibold text-white mb-4">5. Mapeo Masivo de SKUs (Mercado Libre)</h3>
-            <p className="text-gray-400 mb-4">
-                Utiliza esta herramienta para corregir masivamente los SKUs de tus publicaciones. Esto es esencial para que el sincronizador de Kits funcione correctamente.
-            </p>
-            
-            <div className="flex flex-col md:flex-row gap-6 p-4 bg-gray-900/50 rounded-lg">
-                
-                {/* Paso 1: Exportar */}
-                <div className="flex-1 md:border-r border-gray-700 md:pr-6">
-                    <h4 className="text-lg font-medium text-white mb-2">Paso 1: Descargar y Editar</h4>
-                    <p className="text-sm text-gray-400 mb-4">
-                        Descarga el listado actual. Abre el CSV y corrige la columna <code className="text-yellow-400">sku</code>.
-                        Asegúrate de que los SKUs coincidan exactamente (Ej: HG31101/X2). No modifiques <code className="text-yellow-400">meli_id</code>.
-                    </p>
-                    <button 
-                        onClick={handleExport} 
-                        disabled={isExporting || isImporting}
-                        className="w-full px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50 transition duration-150"
-                    >
-                        {isExporting ? 'Exportando...' : 'Descargar CSV Actual'}
-                    </button>
-                </div>
-
-                {/* Paso 2: Importar */}
-                <div className="flex-1">
-                    <h4 className="text-lg font-medium text-white mb-2">Paso 2: Subir y Actualizar</h4>
-                    <p className="text-sm text-gray-400 mb-4">
-                        Una vez corregido el archivo CSV, súbelo aquí. El sistema actualizará los SKUs en la base de datos de forma masiva.
-                    </p>
-                    {/* Input de archivo oculto */}
-                    <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        onChange={handleFileSelect} 
-                        accept=".csv" 
-                        className="hidden" 
-                    />
-                    <button 
-                        onClick={() => fileInputRef.current && fileInputRef.current.click()} 
-                        disabled={isExporting || isImporting}
-                        className="w-full px-5 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:opacity-50 transition duration-150"
-                    >
-                        {isImporting ? 'Importando...' : 'Subir CSV Corregido'}
-                    </button>
-                </div>
-            </div>
-
-            {/* Resultados de la importación */}
-            {importResult && (
-                <div className={`mt-4 p-4 rounded-lg ${importResult.errors && importResult.errors.length > 0 ? 'bg-yellow-900 border border-yellow-700' : (importResult.success ? 'bg-green-900 border border-green-700' : 'bg-red-900 border border-red-700')}`}>
-                    <p className="font-semibold text-white">{importResult.message || importResult.error}</p>
-                    {importResult.errors && importResult.errors.length > 0 && (
-                        <div className="mt-2">
-                            <p className="text-sm text-yellow-300">Advertencias/Errores (Revisar filas):</p>
-                            <ul className="list-disc list-inside text-sm text-yellow-300 max-h-24 overflow-y-auto">
-                                {importResult.errors.map((err, index) => (
-                                    <li key={index}>{err}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-};
 
 // --- FIN DEL NUEVO CÓDIGO ---
 
@@ -558,8 +342,7 @@ const Tools = () => {
             <SuppliersManager />
             <CategoriesManager />
             <BulkPriceUpdater />
-            <RulesManager />
-            <SKUMapper /> {/* <-- Añadimos la nueva herramienta aquí */}
+            <RulesManager /> {/* <-- Añadimos el nuevo componente aquí */}
         </div>
     );
 };

@@ -6,7 +6,6 @@ import { corsHeaders } from '../_shared/cors.ts'
 import * as xlsx from 'https://esm.sh/xlsx@0.18.5'
 
 async function getDropboxAccessToken() {
-    // ... (El código de esta función no cambia)
     const refreshToken = Deno.env.get('DROPBOX_REFRESH_TOKEN')!
     const appKey = Deno.env.get('DROPBOX_APP_KEY')!
     const appSecret = Deno.env.get('DROPBOX_APP_SECRET')!
@@ -60,37 +59,21 @@ serve(async (_req) => {
         const filesData = await listFilesResponse.json();
         const stockFileEntries = filesData.entries.filter(file => file['.tag'] === 'file' && (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.xlsx')));
         
-        const BATCH_SIZE = 1000;
-
         for (const file of stockFileEntries) {
             const providerName = file.name.replace(/\.(txt|csv|xlsx)$/i, '');
             const warehouse = warehouses.find(w => w.name.toLowerCase() === providerName.toLowerCase());
             if (!warehouse) continue;
-
-            await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
-            console.log(`Stock antiguo de ${providerName} eliminado. Procesando archivo ${file.name}...`);
 
             const downloadResponse = await fetch('https://content.dropboxapi.com/2/files/download', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${dropboxToken}`, 'Dropbox-API-Arg': JSON.stringify({ path: file.path_lower })},
             });
             if (!downloadResponse.ok) continue;
-            
-            let totalProcessed = 0;
-            const processBatch = async (batchToProcess) => {
-                if (batchToProcess.length === 0) return;
-                const { error: insertError } = await supabaseAdmin.from('supplier_stock_items').insert(batchToProcess);
-                if (insertError) throw insertError;
-                totalProcessed += batchToProcess.length;
-                console.log(`Lote de ${batchToProcess.length} items guardado para ${providerName}. Total: ${totalProcessed}`);
-            };
 
-            const allItems = [];
+            const itemsToInsert = [];
             const fileNameLower = file.name.toLowerCase();
 
             if (fileNameLower.endsWith('.xlsx')) {
-                // ... (código para leer el excel y mapear cabeceras)
-                // ... este código es igual hasta el bucle
                 const providerConfig = supplierHeaderConfig[providerName.toLowerCase()];
                 if (!providerConfig) continue;
 
@@ -109,7 +92,7 @@ serve(async (_req) => {
                 };
                 
                 if (Object.values(headerMap).some(index => index === -1)) {
-                    console.error(`Archivo '${file.name}' ignorado. Faltan cabeceras.`);
+                    console.error(`Archivo '${file.name}' ignorado. Faltan cabeceras requeridas para ${providerName}.`);
                     continue;
                 }
 
@@ -117,52 +100,57 @@ serve(async (_req) => {
                     const sku = row[headerMap.sku]?.toString().trim();
                     const quantity = parseInt(row[headerMap.stock], 10);
                     const raw_price = parseFloat(row[headerMap.price]);
-                    
-                    if (sku && !isNaN(quantity) && !isNaN(raw_price)) {
-                        const cost_price = parseFloat(raw_price.toFixed(2));
-                        allItems.push({ sku, quantity, cost_price });
+                    const cost_price = parseFloat(raw_price.toFixed(2));
+                    if (sku && !isNaN(quantity) && !isNaN(cost_price)) {
+                        itemsToInsert.push({ warehouse_id: warehouse.id, sku, quantity, cost_price, last_updated: new Date().toISOString() });
                     }
                 }
-            } else {
-                 // ... (código para leer el .txt y parsear líneas)
-                 // ... este código es igual hasta el bucle
+            } else { 
                 const fileContent = await downloadResponse.text();
                 const lines = fileContent.split(/\r?\n/);
                 for (const line of lines) {
                     if (line.trim() === '') continue;
-                    let sku: string | null = null, quantity: number | null = null, cost_price: number | null = null;
+
+                    let sku: string | null = null;
+                    let quantity: number | null = null;
+                    let cost_price: number | null = null;
+                    
                     let parts = line.split('\t');
                     if (parts.length >= 3) {
-                         const priceStr = parts[parts.length - 1]; const quantityStr = parts[parts.length - 2]; sku = parts.slice(0, parts.length - 2).join(' '); quantity = parseInt(quantityStr, 10); cost_price = parseFloat(priceStr.replace(',', '.'));
+                        const priceStr = parts[parts.length - 1];
+                        const quantityStr = parts[parts.length - 2];
+                        sku = parts.slice(0, parts.length - 2).join(' ');
+                        quantity = parseInt(quantityStr, 10);
+                        cost_price = parseFloat(priceStr.replace(',', '.'));
                     } else {
                         const match = line.match(/^(.+?)\s+(\S+)\s+(\S+)$/);
-                        if (match) { sku = match[1].trim(); quantity = parseInt(match[2], 10); cost_price = parseFloat(match[3].replace(',', '.'));
-                        } else { continue; }
+                        if (match) {
+                            sku = match[1].trim();
+                            quantity = parseInt(match[2], 10);
+                            cost_price = parseFloat(match[3].replace(',', '.'));
+                        } else {
+                            console.warn(`Formato de línea no reconocido en ${file.name}: "${line}"`);
+                            continue;
+                        }
                     }
 
                     if (sku && quantity !== null && !isNaN(quantity) && cost_price !== null && !isNaN(cost_price)) {
-                        allItems.push({ sku, quantity, cost_price: parseFloat(cost_price.toFixed(2)) });
+                        itemsToInsert.push({
+                            warehouse_id: warehouse.id,
+                            sku, 
+                            quantity, 
+                            cost_price: parseFloat(cost_price.toFixed(2)),
+                            last_updated: new Date().toISOString(),
+                        });
                     }
                 }
             }
 
-            // --- NUEVO: Limpieza de Duplicados ---
-            const uniqueItems = new Map();
-            for (const item of allItems) {
-                uniqueItems.set(item.sku, item); // Al usar un Map, cada SKU se sobreescribe, quedándonos con el último
-            }
-            console.log(`Archivo ${file.name} leído. Total de items: ${allItems.length}. Items únicos: ${uniqueItems.size}.`);
-
-            const itemsToInsertInBatches = Array.from(uniqueItems.values());
-            for (let i = 0; i < itemsToInsertInBatches.length; i += BATCH_SIZE) {
-                const batch = itemsToInsertInBatches.slice(i, i + BATCH_SIZE).map(item => ({
-                    warehouse_id: warehouse.id,
-                    sku: item.sku,
-                    quantity: item.quantity,
-                    cost_price: item.cost_price,
-                    last_updated: new Date().toISOString()
-                }));
-                await processBatch(batch);
+            if (itemsToInsert.length > 0) {
+                await supabaseAdmin.from('supplier_stock_items').delete().eq('warehouse_id', warehouse.id);
+                const { error: insertError } = await supabaseAdmin.from('supplier_stock_items').insert(itemsToInsert);
+                if (insertError) throw insertError;
+                console.log(`Se procesaron y guardaron ${itemsToInsert.length} items para el archivo ${file.name}.`);
             }
         }
 
