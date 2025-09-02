@@ -223,7 +223,7 @@ const BulkPriceUpdater = () => {
 };
 
 
-// --- HERRAMIENTA 4: MOTOR DE REGLAS DE NEGOCIO (LIGERAMENTE ACTUALIZADA) ---
+// --- HERRAMIENTA 4: MOTOR DE REGLAS DE NEGOCIO (SIN CAMBIOS) ---
 const RulesManager = () => {
     const { showMessage } = useContext(AppContext);
     const [rules, setRules] = useState([]);
@@ -367,9 +367,8 @@ const RulesManager = () => {
     );
 }
 
-// --- INICIO DEL NUEVO CÓDIGO ---
 
-// --- HERRAMIENTA 5: MAPEO MASIVO DE SKUS ---
+// --- HERRAMIENTA 5: MAPEO MASIVO DE SKUS (CORREGIDA CON FORMDATA) ---
 const SKUMapper = () => {
     const { showMessage } = useContext(AppContext);
     const [isExporting, setIsExporting] = useState(false);
@@ -377,7 +376,7 @@ const SKUMapper = () => {
     const fileInputRef = useRef(null);
     const [importResult, setImportResult] = useState(null);
 
-    // Función para Exportar (Descargar CSV) - Llama a bright-handler
+    // Función para Exportar (Llama a bright-handler) (SIN CAMBIOS)
     const handleExport = async () => {
         setIsExporting(true);
         setImportResult(null);
@@ -388,31 +387,28 @@ const SKUMapper = () => {
             });
 
             if (error) {
-                // Intentamos extraer el mensaje de error real si es posible
                 const errorMessage = error.message || 'Error desconocido al invocar la función.';
                 throw new Error(`Error al exportar: ${errorMessage}`);
             }
 
-            // Manejamos respuestas JSON (ej: si la función devuelve {message: "No hay datos"})
-            // supabase.functions.invoke intenta parsear como JSON por defecto.
             if (typeof data === 'object' && data !== null && (data.message || data.error)) {
                  showMessage(data.message || data.error, data.error ? 'error' : 'info');
                  setIsExporting(false);
                  return;
             }
             
-            // Si no es un objeto JSON con mensaje/error, asumimos que es el contenido CSV (texto plano)
             const blob = new Blob([data], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', 'ProdFlow_Mapeo_SKUs.csv');
+            // Actualizamos el nombre del archivo para reflejar que es el completo
+            link.setAttribute('download', 'ProdFlow_Mapeo_SKUs_Completo.csv');
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
 
-            showMessage("Archivo CSV descargado. Por favor, edita la columna 'sku' y guárdalo.", "success");
+            showMessage("Archivo CSV completo descargado. Por favor, edita la columna 'sku' y guárdalo.", "success");
 
         } catch (error) {
             console.error("Error durante la exportación:", error);
@@ -422,19 +418,18 @@ const SKUMapper = () => {
         }
     };
 
-    // Función para manejar la selección del archivo
+    // Función para manejar la selección del archivo (SIN CAMBIOS)
     const handleFileSelect = (event) => {
         const file = event.target.files[0];
         if (file) {
             handleImport(file);
         }
-        // Resetear el input para permitir subir el mismo archivo de nuevo si es necesario
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
     };
 
-    // Función para Importar (Subir CSV Corregido) - Llama a rapid-task
+    // Función para Importar (Llama a rapid-task) (CORREGIDA)
     const handleImport = async (file) => {
         
         if (!window.confirm("¿Estás seguro de que deseas importar este archivo? Esto sobrescribirá los SKUs actuales.")) {
@@ -444,16 +439,17 @@ const SKUMapper = () => {
         setIsImporting(true);
         setImportResult(null);
         try {
-            // Leemos el contenido del archivo como texto
-            const fileContent = await file.text();
+            // CORRECCIÓN: Usamos FormData para enviar el archivo robustamente.
+            const formData = new FormData();
+            // Adjuntamos el archivo bajo la clave 'file' (como espera el backend).
+            formData.append('file', file); 
 
-            // Invocamos la función 'rapid-task' enviando el contenido del CSV en el cuerpo
+            // Invocamos la función 'rapid-task' enviando el FormData
             const { data, error } = await supabase.functions.invoke('rapid-task', {
                 method: 'POST',
-                body: fileContent, // Enviamos el texto plano del CSV
-                headers: {
-                    'Content-Type': 'text/plain', // Indicamos que enviamos texto (la función lo parseará)
-                }
+                body: formData, // Enviamos el FormData
+                // IMPORTANTE: NO seteamos 'Content-Type' manualmente. 
+                // El navegador/librería lo hará automáticamente (multipart/form-data).
             });
 
             if (error) {
@@ -464,7 +460,6 @@ const SKUMapper = () => {
             // Mostramos el resultado
             setImportResult(data);
             if (data.success) {
-                // Mostrar éxito, pero con advertencia si hubo errores parciales
                 showMessage(data.message, data.errors.length > 0 ? "warning" : "success");
             } else {
                 showMessage(data.error || "Falló la importación.", "error");
@@ -492,7 +487,7 @@ const SKUMapper = () => {
                 <div className="flex-1 md:border-r border-gray-700 md:pr-6">
                     <h4 className="text-lg font-medium text-white mb-2">Paso 1: Descargar y Editar</h4>
                     <p className="text-sm text-gray-400 mb-4">
-                        Descarga el listado actual. Abre el CSV y corrige la columna <code className="text-yellow-400">sku</code>.
+                        Descarga el listado completo. Abre el CSV y corrige la columna <code className="text-yellow-400">sku</code>.
                         Asegúrate de que los SKUs coincidan exactamente (Ej: HG31101/X2). No modifiques <code className="text-yellow-400">meli_id</code>.
                     </p>
                     <button 
@@ -500,7 +495,8 @@ const SKUMapper = () => {
                         disabled={isExporting || isImporting}
                         className="w-full px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50 transition duration-150"
                     >
-                        {isExporting ? 'Exportando...' : 'Descargar CSV Actual'}
+                        {/* Actualizamos el texto del botón */}
+                        {isExporting ? 'Exportando...' : 'Descargar CSV Completo'}
                     </button>
                 </div>
 
@@ -510,7 +506,6 @@ const SKUMapper = () => {
                     <p className="text-sm text-gray-400 mb-4">
                         Una vez corregido el archivo CSV, súbelo aquí. El sistema actualizará los SKUs en la base de datos de forma masiva.
                     </p>
-                    {/* Input de archivo oculto */}
                     <input 
                         type="file" 
                         ref={fileInputRef} 
@@ -548,8 +543,6 @@ const SKUMapper = () => {
     );
 };
 
-// --- FIN DEL NUEVO CÓDIGO ---
-
 
 const Tools = () => {
     return (
@@ -559,7 +552,7 @@ const Tools = () => {
             <CategoriesManager />
             <BulkPriceUpdater />
             <RulesManager />
-            <SKUMapper /> {/* <-- Añadimos la nueva herramienta aquí */}
+            <SKUMapper />
         </div>
     );
 };
