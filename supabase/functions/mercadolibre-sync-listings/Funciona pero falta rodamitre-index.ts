@@ -27,22 +27,6 @@ async function getRefreshedToken(refreshToken: string, supabaseAdmin: SupabaseCl
   return newTokens.access_token
 }
 
-// --- MEJORA 1: Función de ayuda para extraer el SKU de forma más robusta ---
-// Busca en `seller_custom_field`, luego en el atributo `SELLER_SKU` y finalmente en `GTIN`.
-function getSkuForItem(itemBody: any, variation: any = null): string | null {
-  if (variation) {
-    return variation.seller_custom_field || 
-           variation.attributes?.find((attr: any) => attr.id === 'SELLER_SKU')?.value_name ||
-           variation.attributes?.find((attr: any) => attr.id === 'GTIN')?.value_name || 
-           null;
-  }
-  return itemBody.seller_custom_field || 
-         itemBody.attributes?.find((attr: any) => attr.id === 'SELLER_SKU')?.value_name ||
-         itemBody.attributes?.find((attr: any) => attr.id === 'GTIN')?.value_name ||
-         null;
-}
-
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -79,10 +63,9 @@ serve(async (req) => {
     const meliUserId = mlTokens.meli_user_id;
     if (!meliUserId) throw new Error('ML User ID is missing from credentials.');
 
-    const allListingIds: string[] = [];
+    const allListingIds = [];
     let scrollId: string | null = null;
 
-    // --- Bucle para obtener TODOS los IDs de publicaciones desde ML ---
     while (true) {
       let url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?search_type=scan`;
       if (scrollId) {
@@ -102,20 +85,27 @@ serve(async (req) => {
       const results = listingsIdsData.results;
       scrollId = listingsIdsData.scroll_id; 
 
-      if (!results || results.length === 0) break;
+      if (!results || results.length === 0) {
+        break;
+      }
+      
       allListingIds.push(...results);
-      if (!scrollId) break;
+
+      if (!scrollId) {
+        break;
+      }
     }
 
     if (allListingIds.length === 0) {
-      // Si no hay publicaciones en ML, borramos todo lo local. Esto es correcto.
       await supabaseAdmin.from('mercadolibre_listings').delete().eq('user_id', user.id);
-      return new Response(JSON.stringify({ success: true, count: 0, message: 'No listings found on Mercado Libre.' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
+      return new Response(JSON.stringify({ success: true, count: 0, message: 'No listings found.' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
     }
 
     const CHUNK_SIZE = 20;
     const allListingsToUpsert = [];
-    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,seller_custom_field,pictures';
+
+    // --- CAMBIO 1: Añadimos 'pictures' a la lista de atributos que pedimos a la API ---
+    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,pictures';
 
     for (let i = 0; i < allListingIds.length; i += CHUNK_SIZE) {
       const chunk = allListingIds.slice(i, i + CHUNK_SIZE);
@@ -124,7 +114,7 @@ serve(async (req) => {
       });
 
       if (!itemsDetailsResponse.ok) {
-        console.error(`Error fetching item details chunk, skipping.`);
+        console.error(`Error fetching item details chunk`);
         continue;
       }
 
@@ -134,30 +124,33 @@ serve(async (req) => {
       for (const item of itemsChunk) {
         if (!item.body) continue;
         const hasVariations = item.body.variations && item.body.variations.length > 0;
-
         if (hasVariations) {
           for (const variation of item.body.variations) {
-            const sku = getSkuForItem(item.body, variation);
+            const sku = variation.seller_custom_field || variation.attributes?.find(attr => attr.id === 'GTIN')?.value_name;
             if (sku) {
               allListingsToUpsert.push({
                 user_id: user.id, meli_id: item.body.id, meli_variation_id: variation.id,
-                title: `${item.body.title} (${variation.attribute_combinations.map((attr:any) => attr.value_name).join(' - ')})`,
-                sku: sku, price: variation.price ?? item.body.price, permalink: item.body.permalink,
+                title: `${item.body.title} (${variation.attribute_combinations.map(attr => attr.value_name).join(' - ')})`,
+                sku: sku, price: variation.price || item.body.price, permalink: item.body.permalink,
                 available_quantity: variation.available_quantity, sold_quantity: variation.sold_quantity,
-                status: item.body.status, listing_type_id: item.body.listing_type_id, 
-                thumbnail_url: item.body.thumbnail, pictures: item.body.pictures,
+                last_synced_at: new Date().toISOString(), status: item.body.status, 
+                listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
+                // --- CAMBIO 2: Añadimos el campo 'pictures' para guardarlo ---
+                pictures: item.body.pictures,
               });
             }
           }
         } else {
-          const sku = getSkuForItem(item.body);
+          const sku = item.body.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || item.body.attributes?.find(attr => attr.id === 'GTIN')?.value_name;
           if (sku) {
             allListingsToUpsert.push({
               user_id: user.id, meli_id: item.body.id, meli_variation_id: null,
               title: item.body.title, sku: sku, price: item.body.price,
               permalink: item.body.permalink, available_quantity: item.body.available_quantity,
-              sold_quantity: item.body.sold_quantity, status: item.body.status,
+              sold_quantity: item.body.sold_quantity,
+              last_synced_at: new Date().toISOString(), status: item.body.status,
               listing_type_id: item.body.listing_type_id, thumbnail_url: item.body.thumbnail,
+              // --- CAMBIO 3: Añadimos también aquí el campo 'pictures' ---
               pictures: item.body.pictures,
             });
           }
@@ -165,36 +158,13 @@ serve(async (req) => {
       }
     }
     
-    // --- MEJORA 2: Se elimina el `DELETE` total de aquí. ---
-    // Ya no borramos todo de antemano.
-
+    await supabaseAdmin.from('mercadolibre_listings').delete().eq('user_id', user.id);
     if (allListingsToUpsert.length > 0) {
-      // --- MEJORA 3: Usamos `upsert` para insertar o actualizar ---
-      // `onConflict` le dice a Supabase que si ya existe un registro con el mismo `user_id` y `meli_id`/`meli_variation_id`,
-      // simplemente lo actualice en lugar de crear uno nuevo y fallar.
-      const { error: upsertError } = await supabaseAdmin
-        .from('mercadolibre_listings')
-        .upsert(allListingsToUpsert, { onConflict: 'user_id, meli_id, meli_variation_id' });
-        
-      if (upsertError) throw upsertError;
+      const { error: insertError } = await supabaseAdmin.from('mercadolibre_listings').insert(allListingsToUpsert)
+      if (insertError) throw insertError
     }
 
-    // --- MEJORA 4: Limpieza de registros obsoletos ---
-    // Obtenemos los IDs únicos de las publicaciones que SÍ encontramos en Mercado Libre.
-    const activeMeliIds = [...new Set(allListingsToUpsert.map(p => p.meli_id))];
-
-    // Borramos de nuestra base de datos aquellas publicaciones que ya no están en la lista activa de ML.
-    if (activeMeliIds.length > 0) {
-        const { error: deleteError } = await supabaseAdmin
-            .from('mercadolibre_listings')
-            .delete()
-            .eq('user_id', user.id)
-            .not('meli_id', 'in', `(${activeMeliIds.join(',')})`);
-
-        if (deleteError) console.error("Error cleaning up old listings:", deleteError);
-    }
-
-    return new Response(JSON.stringify({ success: true, count: allListingsToUpsert.length, message: "Sync completed successfully." }), {
+    return new Response(JSON.stringify({ success: true, count: allListingsToUpsert.length }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
     })
 

@@ -1,108 +1,71 @@
-// Ruta: supabase/functions/mercadolibre-update-publication/index.ts
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.42.0'
 import { corsHeaders } from '../_shared/cors.ts'
+// --- PASO 1: Importamos el mismo "motor" compartido ---
+import { getRefreshedToken, updateMeliListing } from '../_shared/meli-updater.ts'
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const supabaseAdmin = createClient(
+    const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
-    const { publication, newPrice, newSku } = await req.json();
-    const { meli_id, meli_variation_id } = publication;
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    )
     
-    const { data: userCredentials, error: credError } = await supabaseAdmin
-      .from('meli_credentials')
-      .select('access_token, user_id')
-      .limit(1).single();
-    if (credError) throw credError;
-    
-    const accessToken = userCredentials.access_token;
+    const { data: { user } } = await supabaseClient.auth.getUser()
+    if (!user) throw new Error('User not found')
 
-    const getItemResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}?include_attributes=all`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    if (!getItemResponse.ok) throw new Error('No se pudo obtener la publicación de Mercado Libre.');
-    const currentItem = await getItemResponse.json();
-
-    const sellerSkuAttribute = currentItem.attributes.find(attr => attr.id === 'SELLER_SKU');
-    if (sellerSkuAttribute) {
-      sellerSkuAttribute.value_name = newSku;
-    } else {
-      currentItem.attributes.push({ id: 'SELLER_SKU', value_name: newSku });
+    const { listing, newPrice, newSku } = await req.json();
+    if (!listing || !listing.meli_id) {
+        throw new Error("Listing data is required.");
+    }
+     if (newPrice === undefined && newSku === undefined) {
+        throw new Error("Either newPrice or newSku must be provided.");
     }
 
-    let body;
+    const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-    if (meli_variation_id && currentItem.variations && currentItem.variations.length > 0) {
-      const updatedVariations = currentItem.variations.map(variation => {
-        if (variation.id === meli_variation_id) {
-          const newVariation = { ...variation, price: newPrice };
-          delete newVariation.seller_custom_field;
-          return newVariation;
-        }
-        return variation;
-      });
-      
-      // --- CORRECCIÓN: Quitamos el campo 'title' ---
-      body = {
-        seller_custom_field: newSku,
-        attributes: currentItem.attributes,
-        variations: updatedVariations,
-      };
+    let { data: mlTokens } = await supabaseAdmin.from('meli_credentials').select('access_token, refresh_token, expires_at').eq('user_id', user.id).single()
+    if (!mlTokens) throw new Error('Mercado Libre token not found.');
+    
+    if (new Date(mlTokens.expires_at) < new Date()) {
+      mlTokens.access_token = await getRefreshedToken(mlTokens.refresh_token, supabaseAdmin, user.id)
+    }
 
-    } else {
-      // --- CORRECCIÓN: Quitamos el campo 'title' ---
-      body = {
-        price: newPrice,
-        seller_custom_field: newSku,
-        attributes: currentItem.attributes,
-      };
+    // --- PASO 2: Le decimos al motor qué hacer ---
+    // Preparamos el objeto de actualización específico para esta función.
+    const updates: { [key: string]: any } = {};
+    if (newPrice !== undefined) updates.price = newPrice;
+    if (newSku !== undefined) updates.seller_custom_field = newSku;
+    
+    // Llamamos al motor.
+    const result = await updateMeliListing(listing, updates, mlTokens.access_token);
+
+    // Actualizamos nuestra base de datos local solo si ML tuvo éxito.
+    if (result.success) {
+      const dbUpdates: { [key: string]: any } = {};
+      if (newPrice !== undefined) dbUpdates.price = newPrice;
+      if (newSku !== undefined) dbUpdates.sku = newSku;
+
+      await supabaseAdmin
+        .from('mercadolibre_listings')
+        .update(dbUpdates)
+        .eq('user_id', user.id)
+        .eq('meli_id', listing.meli_id)
+        .eq(listing.meli_variation_id ? 'meli_variation_id' : 'meli_id', listing.meli_variation_id ?? listing.meli_id);
     }
     
-    const updateResponse = await fetch(`https://api.mercadolibre.com/items/${meli_id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      console.error('ML API Error:', JSON.stringify(errorData, null, 2));
-      throw new Error(`Error de Mercado Libre: ${errorData.message}`);
-    }
-
-    let query = supabaseAdmin
-      .from('mercadolibre_listings')
-      .update({ price: newPrice, sku: newSku })
-      .eq('meli_id', meli_id);
-
-    if (meli_variation_id) {
-      query = query.eq('meli_variation_id', meli_variation_id);
-    } else {
-      query = query.is('meli_variation_id', null);
-    }
-    const { error: dbError } = await query;
-    if (dbError) throw dbError;
-
-    return new Response(JSON.stringify({ success: true }), {
+    return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
     });
 
   } catch (error) {
-    console.error('Error in update function:', error.message)
+    console.error('Error in update-publication function:', error.message)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    })
   }
-});
+})
