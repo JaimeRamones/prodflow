@@ -22,20 +22,9 @@ const SuppliersManager = () => {
         try {
             let error;
             if (editingSupplier) {
-    // Llamamos a nuestra nueva función segura en lugar de hacer el update directo
-    const { data, error: rpcError } = await supabase.rpc('update_supplier_markup', {
-        p_supplier_id: editingSupplier.id,
-        p_new_markup: supplierData.markup
-    });
-    
-    // Si la función devuelve un mensaje de error, lo lanzamos
-    if (rpcError || (data && data.startsWith('Error:'))) {
-        throw new Error(rpcError?.message || data);
-    }
-    // No necesitamos asignar el error aquí porque la función ya lo maneja
-    error = null;
-
-} else {
+                const response = await supabase.from('suppliers').update(supplierData).eq('id', editingSupplier.id);
+                error = response.error;
+            } else {
                 const response = await supabase.from('suppliers').insert([supplierData]);
                 error = response.error;
             }
