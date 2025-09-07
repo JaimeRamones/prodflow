@@ -1,5 +1,5 @@
-// Ruta: supabase/functions/mercadolibre-sync-orders/index.ts
-// VERSIÓN FINAL CORREGIDA
+// supabase/functions/mercadolibre-sync-orders/index.ts
+// VERSIÓN FINAL DE PRODUCCIÓN
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
@@ -13,21 +13,16 @@ async function getMeliToken(supabaseClient, userId) {
     .single();
 
   if (error || !creds) {
-    console.error("Error al buscar credenciales de ML:", error);
     throw new Error("Credenciales de ML no encontradas para este usuario.");
   }
 
   const tokenAge = (new Date().getTime() - new Date(creds.last_updated).getTime()) / 1000;
-  if (tokenAge < 21600) { // Menos de 6 horas
+  if (tokenAge < 21600) {
     return creds.access_token;
   }
-  
-  console.log("Token de ML expirado. Refrescando...");
 
-  // --- CORRECCIÓN AQUÍ: Usamos "MELI_CLIENT_ID" para que coincida con tu secreto ---
   const MELI_CLIENT_ID = Deno.env.get("MELI_CLIENT_ID"); 
   const MELI_CLIENT_SECRET = Deno.env.get("MELI_CLIENT_SECRET");
-  // ---------------------------------------------------------------------------------
 
   const response = await fetch("https://api.mercadolibre.com/oauth/token", {
     method: "POST",
@@ -45,9 +40,9 @@ async function getMeliToken(supabaseClient, userId) {
     console.error("Respuesta de error de ML al refrescar token:", errorBody);
     throw new Error(`Error al refrescar el token de ML: ${response.statusText}`);
   }
-  
+
   const tokenData = await response.json();
-  
+
   await supabaseClient
     .from("meli_credentials")
     .update({
@@ -56,7 +51,7 @@ async function getMeliToken(supabaseClient, userId) {
       last_updated: new Date().toISOString(),
     })
     .eq("user_id", creds.user_id);
-    
+
   return tokenData.access_token;
 }
 
@@ -90,7 +85,7 @@ serve(async (req) => {
     const ordersUrl = `https://api.mercadolibre.com/orders/search?seller=${meliUser.id}&order.date_created.from=${dateFrom}`;
     const ordersResp = await fetch(ordersUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!ordersResp.ok) throw new Error(`Error al buscar órdenes en ML. Status: ${ordersResp.status}`);
-    
+
     const { results: orders } = await ordersResp.json();
 
     if (orders.length === 0) {
@@ -129,7 +124,7 @@ serve(async (req) => {
         unit_price: item.unit_price,
         thumbnail_url: item.item.thumbnail,
       }));
-      
+
       const { error: itemsError } = await supabase
         .from('order_items')
         .upsert(orderItems, { onConflict: 'order_id, sku' });
