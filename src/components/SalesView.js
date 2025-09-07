@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN POTENCIADA Y CORREGIDA
+// VERSIÓN POTENCIADA: Incluye filtros avanzados, selección masiva, cálculo de costos y diseño mejorado.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -27,12 +27,12 @@ const SalesView = () => {
     // --- NUEVOS ESTADOS PARA FILTROS Y SELECCIÓN ---
     const [selectedOrders, setSelectedOrders] = useState(new Set());
     const [filters, setFilters] = useState({
-        shippingType: 'all', // 'all', 'flex', 'mercado_envios'
+        shippingType: 'all', // 'all', 'flex', 'fulfillment', etc.
         status: 'all', // 'all', 'printed', 'ready_to_ship', 'cancelled', 'daily_dispatch'
     });
     const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
     
-    const ITEMS_PER_PAGE = 50;
+    const ITEMS_PER_PAGE = 50; // Aumentado a 50 como solicitaste
 
     // --- LÓGICA DE BÚSQUEDA Y FILTRADO ---
     useEffect(() => {
@@ -76,6 +76,7 @@ const SalesView = () => {
                 showMessage("Error al cargar las ventas: " + error.message, "error");
                 setOrders([]);
             } else {
+                // Enriquecemos los datos para incluir el costo y las imágenes correctas
                 const enrichedOrders = data.map(order => ({
                     ...order,
                     order_items: order.order_items.map(item => {
@@ -104,6 +105,7 @@ const SalesView = () => {
         setPage(0);
     }, [searchTerm, filters]);
 
+    // --- LÓGICA DE SELECCIÓN DE ÓRDENES ---
     const handleSelectOrder = (orderId) => {
         const newSelection = new Set(selectedOrders);
         if (newSelection.has(orderId)) {
@@ -122,6 +124,7 @@ const SalesView = () => {
         }
     };
 
+    // --- LÓGICA PARA IMPRIMIR ETIQUETAS (PLACEHOLDER) ---
     const handlePrintLabels = (format) => {
         if (selectedOrders.size === 0) {
             showMessage("Por favor, selecciona al menos una venta para imprimir.", "info");
@@ -144,6 +147,7 @@ const SalesView = () => {
         <div>
             <h2 className="text-3xl font-bold text-white mb-6">Gestión de Ventas</h2>
             
+            {/* --- SECCIÓN DE FILTROS Y BÚSQUEDA --- */}
             <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4">
                 <input
                     type="text"
@@ -168,6 +172,7 @@ const SalesView = () => {
                 </div>
             </div>
 
+             {/* --- BARRA DE ACCIONES MASIVAS --- */}
             <div className="flex items-center gap-4 mb-4">
                 <div className="flex items-center">
                     <input type="checkbox" onChange={handleSelectAll} checked={selectedOrders.size === orders.length && orders.length > 0} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
@@ -177,6 +182,8 @@ const SalesView = () => {
                 <button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">Imprimir ZPL</button>
             </div>
 
+
+            {/* --- LISTADO DE VENTAS --- */}
             <div className="space-y-4">
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando ventas...</p> ) : (
                     orders.length > 0 ? orders.map(order => (
@@ -184,6 +191,7 @@ const SalesView = () => {
                             <input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="mt-1 w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" />
                             
                             <div className="flex-grow">
+                                {/* Cabecera de la orden */}
                                 <div className="flex justify-between items-start mb-3">
                                     <div>
                                         <p className="text-white font-bold text-lg">Venta #{order.meli_order_id}</p>
@@ -199,6 +207,7 @@ const SalesView = () => {
                                     </div>
                                 </div>
                                 
+                                {/* Items de la orden */}
                                 <div className="border-t border-gray-700 pt-3 space-y-4">
                                     {order.order_items.map((item, index) => (
                                         <div key={index} className="flex items-start gap-4">
@@ -223,6 +232,7 @@ const SalesView = () => {
                 )}
             </div>
 
+             {/* Paginación */}
              <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700">
                 <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0 || isLoading} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Anterior</button>
                 <span className="text-gray-400">Página {page + 1} de {totalPages > 0 ? totalPages : 1}</span>
