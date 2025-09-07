@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// ARCHIVO COMPLETO Y MODIFICADO PARA LA PRUEBA "test-log"
+// VERSIÓN FINAL RESTAURADA
 
 import React, { useState, useEffect, useContext } from 'react';
 import { AppContext } from '../App';
@@ -90,20 +90,15 @@ const SalesView = () => {
 
     const handleSyncSales = async () => {
         setIsSyncing(true);
-        showMessage("Ejecutando función de prueba 'test-log'...", "info");
         try {
-            // ----- AQUÍ ESTÁ EL CAMBIO PARA LA PRUEBA -----
-            const { data, error } = await supabase.functions.invoke('test-log');
-            // ---------------------------------------------
-
+            // ----- LÍNEA RESTAURADA A LA ORIGINAL -----
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-orders');
+            // ------------------------------------------
             if (error) throw error;
-            
-            console.log("Respuesta de la función de prueba:", data);
-            showMessage(`Éxito de la prueba: ${data.message}`, 'success');
-
+            showMessage(data.message || 'Ventas sincronizadas.', 'success');
+            await fetchSalesOrders();
         } catch (err) {
-            console.error("Error al invocar la función de prueba:", err);
-            showMessage(`Error al invocar test-log: ${err.message}`, 'error');
+            showMessage(`Error al sincronizar ventas: ${err.message}`, 'error');
         } finally {
             setIsSyncing(false);
         }
@@ -134,7 +129,7 @@ const SalesView = () => {
                      disabled={isSyncing}
                      className="px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed"
                  >
-                     {isSyncing ? 'Probando...' : 'Probar Función (test-log)'}
+                     {isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas de ML'}
                  </button>
             </div>
             

@@ -1,30 +1,37 @@
-// supabase/functions/mercadolibre-sync-orders/index.ts
+// Ruta: supabase/functions/mercadolibre-sync-orders/index.ts
+// VERSIÓN FINAL CORREGIDA
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
 import { corsHeaders } from "../_shared/cors.ts";
 
-// Función para obtener un token de acceso válido de Mercado Libre
-async function getMeliToken(supabaseClient) {
+async function getMeliToken(supabaseClient, userId) {
   const { data: creds, error } = await supabaseClient
     .from("meli_credentials")
-    .select("access_token, refresh_token, last_updated")
+    .select("access_token, refresh_token, last_updated, user_id")
+    .eq("user_id", userId)
     .single();
 
-  if (error || !creds) throw new Error("Credenciales de ML no encontradas.");
-
-  const tokenAge = (new Date() - new Date(creds.last_updated)) / 1000;
-  if (tokenAge < 21600) { // Menos de 6 horas, el token es válido
-    return creds.access_token;
+  if (error || !creds) {
+    console.error("Error al buscar credenciales de ML:", error);
+    throw new Error("Credenciales de ML no encontradas para este usuario.");
   }
 
-  // Si el token expiró, hay que refrescarlo
-  const MELI_CLIENT_ID = Deno.env.get("REACT_APP_MELI_CLIENT_ID");
+  const tokenAge = (new Date().getTime() - new Date(creds.last_updated).getTime()) / 1000;
+  if (tokenAge < 21600) { // Menos de 6 horas
+    return creds.access_token;
+  }
+  
+  console.log("Token de ML expirado. Refrescando...");
+
+  // --- CORRECCIÓN AQUÍ: Usamos "MELI_CLIENT_ID" para que coincida con tu secreto ---
+  const MELI_CLIENT_ID = Deno.env.get("MELI_CLIENT_ID"); 
   const MELI_CLIENT_SECRET = Deno.env.get("MELI_CLIENT_SECRET");
+  // ---------------------------------------------------------------------------------
 
   const response = await fetch("https://api.mercadolibre.com/oauth/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",
       client_id: MELI_CLIENT_ID,
@@ -33,11 +40,14 @@ async function getMeliToken(supabaseClient) {
     }),
   });
 
-  if (!response.ok) throw new Error("Error al refrescar el token de ML.");
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("Respuesta de error de ML al refrescar token:", errorBody);
+    throw new Error(`Error al refrescar el token de ML: ${response.statusText}`);
+  }
   
   const tokenData = await response.json();
   
-  // Actualiza las credenciales en la base de datos
   await supabaseClient
     .from("meli_credentials")
     .update({
@@ -46,10 +56,9 @@ async function getMeliToken(supabaseClient) {
       last_updated: new Date().toISOString(),
     })
     .eq("user_id", creds.user_id);
-
+    
   return tokenData.access_token;
 }
-
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -62,29 +71,26 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
       { global: { headers: { Authorization: req.headers.get("Authorization")! } } }
     );
-    
+
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Usuario no autenticado.");
 
-    const accessToken = await getMeliToken(supabase);
-    
-    // 1. Obtener el User ID de Mercado Libre
+    const accessToken = await getMeliToken(supabase, user.id);
+
     const userResp = await fetch("https://api.mercadolibre.com/users/me", {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (!userResp.ok) throw new Error("No se pudo obtener el usuario de ML.");
+    if (!userResp.ok) throw new Error(`No se pudo obtener el usuario de ML. Status: ${userResp.status}`);
     const meliUser = await userResp.json();
 
-    // 2. Buscar órdenes de los últimos 7 días
     const date = new Date();
     date.setDate(date.getDate() - 7);
     const dateFrom = date.toISOString();
 
-    const ordersResp = await fetch(
-      `https://api.mercadolibre.com/orders/search?seller=${meliUser.id}&order.date_created.from=${dateFrom}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (!ordersResp.ok) throw new Error("Error al buscar órdenes en ML.");
+    const ordersUrl = `https://api.mercadolibre.com/orders/search?seller=${meliUser.id}&order.date_created.from=${dateFrom}`;
+    const ordersResp = await fetch(ordersUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!ordersResp.ok) throw new Error(`Error al buscar órdenes en ML. Status: ${ordersResp.status}`);
+    
     const { results: orders } = await ordersResp.json();
 
     if (orders.length === 0) {
@@ -93,13 +99,8 @@ serve(async (req) => {
       });
     }
 
-    // 3. Procesar y guardar cada orden
     for (const order of orders) {
-      // Información del envío
-      let shippingType = 'mercado_envios';
-      if (order.shipping && order.shipping.shipping_mode === 'me1') {
-          shippingType = 'flex';
-      }
+      let shippingType = order.shipping?.logistic_type === 'flex' ? 'flex' : 'mercado_envios';
 
       const saleOrderData = {
         meli_order_id: order.id,
@@ -108,7 +109,7 @@ serve(async (req) => {
         total_amount: order.total_amount,
         shipping_id: order.shipping?.id,
         shipping_type: shippingType,
-        status: 'Pendiente', // Estado inicial
+        status: 'Pendiente',
         created_at: order.date_created,
       };
 
@@ -117,10 +118,8 @@ serve(async (req) => {
         .upsert(saleOrderData, { onConflict: 'meli_order_id' })
         .select()
         .single();
-      
       if (orderError) throw orderError;
 
-      // Procesar los items de la orden
       const orderItems = order.order_items.map(item => ({
         order_id: savedOrder.id,
         meli_item_id: item.item.id,
@@ -128,13 +127,12 @@ serve(async (req) => {
         title: item.item.title,
         quantity: item.quantity,
         unit_price: item.unit_price,
-        thumbnail_url: item.item.thumbnail, // Guardamos la URL de la imagen
+        thumbnail_url: item.item.thumbnail,
       }));
       
       const { error: itemsError } = await supabase
         .from('order_items')
-        .upsert(orderItems, { onConflict: 'order_id, sku' }); // Evita duplicados por si se re-sincroniza
-
+        .upsert(orderItems, { onConflict: 'order_id, sku' });
       if (itemsError) throw itemsError;
     }
 
@@ -143,7 +141,8 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error("Error en la función 'mercadolibre-sync-orders':", error);
+    return new Response(JSON.stringify({ error: `Error interno en la función: ${error.message}` }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
