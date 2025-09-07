@@ -1,12 +1,12 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CON CORRECCIÓN DE 'index' no-undef
+// VERSIÓN CON CORRECCIÓN DEFINITIVA DE IMÁGENES
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
 
-// --- NUEVOS ÍCONOS MÁS LLAMATIVOS ---
+// --- ÍCONOS LLAMATIVOS ---
 const FlexIcon = () => (
     <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full">
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg>
@@ -23,7 +23,7 @@ const ShippingIcon = () => (
 
 
 const SalesView = () => {
-    const { session, products, showMessage, salesOrders, fetchSalesOrders } = useContext(AppContext);
+    const { products, showMessage, salesOrders, fetchSalesOrders } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
     const [page, setPage] = useState(0);
@@ -45,16 +45,25 @@ const SalesView = () => {
             order_items: order.order_items.map(item => {
                 const productInfo = products.find(p => p.sku === item.sku);
                 const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A';
+                
+                // --- LÓGICA DE DIAGNÓSTICO Y CORRECCIÓN DE IMAGEN ---
+                // Imprimimos en consola para verificar la URL que llega de la BD
+                // console.log(`Item: ${item.title}, thumbnail_url: ${item.thumbnail_url}`);
+
+                // Aseguramos que la URL sea HTTPS
+                const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null;
+                const images = productInfo?.image_urls || [secureThumbnail, 'https://via.placeholder.com/150'];
+
                 return {
                     ...item,
                     cost_with_vat: costWithVat,
-                    images: productInfo?.image_urls || [item.thumbnail_url, 'https://via.placeholder.com/150'],
+                    images: images,
                 };
             })
         }));
 
         let filtered = enriched;
-
+        // Lógica de filtros... (sin cambios)
         if (filters.shippingType !== 'all') {
             filtered = filtered.filter(order => order.shipping_type === filters.shippingType);
         }
@@ -66,7 +75,6 @@ const SalesView = () => {
                 filtered = filtered.filter(order => order.status === filters.status);
             }
         }
-
         if (searchTerm.trim()) {
             const term = searchTerm.trim().toLowerCase();
             filtered = filtered.filter(order => 
@@ -76,7 +84,6 @@ const SalesView = () => {
                 order.order_items.some(item => item.sku?.toLowerCase().includes(term) || item.title?.toLowerCase().includes(term))
             );
         }
-
         return filtered;
     }, [salesOrders, products, searchTerm, filters]);
 
@@ -97,25 +104,19 @@ const SalesView = () => {
         setSelectedOrders(new Set());
     }, [searchTerm, filters]);
     
-    // Limpia la selección si la página cambia
     useEffect(() => {
         setSelectedOrders(new Set());
     }, [page]);
 
+    // Funciones handle (sin cambios)
     const handleSelectOrder = (orderId) => {
         const newSelection = new Set(selectedOrders);
         newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId);
         setSelectedOrders(newSelection);
     };
-
     const handleSelectAll = (e) => {
-        if (e.target.checked) {
-            setSelectedOrders(new Set(paginatedOrders.map(o => o.id)));
-        } else {
-            setSelectedOrders(new Set());
-        }
+        if (e.target.checked) { setSelectedOrders(new Set(paginatedOrders.map(o => o.id))); } else { setSelectedOrders(new Set()); }
     };
-    
     const handleSyncSales = async () => {
         setIsSyncing(true);
         try {
@@ -123,22 +124,13 @@ const SalesView = () => {
             if (error) throw error;
             showMessage(data.message || 'Ventas sincronizadas.', 'success');
             await fetchSalesOrders();
-        } catch (err) {
-            showMessage(`Error al sincronizar ventas: ${err.message}`, 'error');
-        } finally {
-            setIsSyncing(false);
-        }
+        } catch (err) { showMessage(`Error al sincronizar ventas: ${err.message}`, 'error'); } finally { setIsSyncing(false); }
     };
-
     const handlePrintLabels = (format) => {
-        if (selectedOrders.size === 0) {
-            showMessage("Por favor, selecciona al menos una venta para imprimir.", "info");
-            return;
-        }
+        if (selectedOrders.size === 0) { showMessage("Por favor, selecciona al menos una venta para imprimir.", "info"); return; }
         const selectedIds = Array.from(selectedOrders);
         showMessage(`Función de imprimir en ${format} no implementada. IDs: ${selectedIds.join(', ')}`, "warning");
     };
-
     const formatDate = (dateString) => {
         if (!dateString) return 'N/A';
         const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
@@ -147,25 +139,15 @@ const SalesView = () => {
 
     return (
         <div>
+            {/* Header y Filtros (sin cambios) */}
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                  <h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2>
-                 <button 
-                    onClick={handleSyncSales} 
-                    disabled={isSyncing}
-                    className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed"
-                 >
+                 <button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
                      {isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}
                  </button>
             </div>
-            
             <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4">
-                <input
-                    type="text"
-                    placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-400"
-                />
+                <input type="text" placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-400" />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <select value={filters.shippingType} onChange={e => setFilters({...filters, shippingType: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white">
                         <option value="all">Todos los Envíos</option>
@@ -181,21 +163,22 @@ const SalesView = () => {
                     </select>
                 </div>
             </div>
-
             <div className="flex items-center gap-4 mb-4">
                 <div className="flex items-center">
-                    <input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
+                    <input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" />
                     <label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label>
                 </div>
                 <button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">Imprimir PDF</button>
                 <button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">Imprimir ZPL</button>
             </div>
 
+            {/* Listado de Ventas */}
             <div className="space-y-4">
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : (
                     paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                         <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                             <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
+                                {/* ... Cabecera de la orden sin cambios ... */}
                                 <div className="flex items-center gap-4">
                                     <input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" />
                                     <div>
@@ -213,10 +196,10 @@ const SalesView = () => {
                             </div>
 
                             <div className="p-4 space-y-3">
-                                {/* --- CORRECCIÓN AQUÍ --- */}
                                 {order.order_items.map((item, index) => (
                                     <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 rounded-md hover:bg-gray-700/50">
                                         <div className="flex-shrink-0 flex gap-2">
+                                            {/* --- IMAGEN CORREGIDA Y MÁS ROBUSTA --- */}
                                             {item.images && item.images[0] && <img src={item.images[0]} alt={item.title} className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[0])}/>}
                                             {item.images && item.images[1] && <img src={item.images[1]} alt={item.title} className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[1])}/>}
                                         </div>
@@ -242,6 +225,7 @@ const SalesView = () => {
                 )}
             </div>
 
+             {/* Paginación (sin cambios) */}
              <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700">
                 <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Anterior</button>
                 <span className="text-gray-400">Página {page + 1} de {totalPages > 0 ? totalPages : 1}</span>
