@@ -1,180 +1,235 @@
-// supabase/functions/mercadolibre-sync-orders/index.ts
+// Ruta: src/components/SalesView.js
+// VERSIÓN CORREGIDA Y COMPLETA
 
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
-import { corsHeaders } from "../_shared/cors.ts";
+import React, { useState, useEffect, useContext } from 'react';
+import { AppContext } from '../App';
+import { supabase } from '../supabaseClient';
+import ImageZoomModal from './ImageZoomModal';
 
-// La función getMeliToken no cambia, la dejamos como está.
-async function getMeliToken(supabaseClient, userId) {
-  const { data: creds, error } = await supabaseClient
-    .from("meli_credentials")
-    .select("access_token, refresh_token, last_updated, user_id")
-    .eq("user_id", userId) // Aseguramos que sean las credenciales del usuario correcto
-    .single();
+// Iconos
+const FlexIcon = () => (
+    <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z" clipRule="evenodd"></path></svg>
+);
+const ShippingIcon = () => (
+    <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg>
+);
 
-  if (error || !creds) {
-    console.error("Error al buscar credenciales de ML:", error);
-    throw new Error("Credenciales de ML no encontradas para este usuario.");
-  }
 
-  const tokenAge = (new Date() - new Date(creds.last_updated)) / 1000;
-  if (tokenAge < 21600) {
-    console.log("[DIAGNÓSTICO] Token de ML es válido. Usando token existente.");
-    return creds.access_token;
-  }
-  
-  console.log("[DIAGNÓSTICO] Token de ML expirado. Refrescando...");
-  const MELI_CLIENT_ID = Deno.env.get("REACT_APP_MELI_CLIENT_ID");
-  const MELI_CLIENT_SECRET = Deno.env.get("MELI_CLIENT_SECRET");
+const SalesView = () => {
+    const { session, products, showMessage, salesOrders, fetchSalesOrders } = useContext(AppContext);
+    const [isLoading, setIsLoading] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [page, setPage] = useState(0);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedOrders, setSelectedOrders] = useState(new Set());
+    const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' });
+    const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
 
-  const response = await fetch("https://api.mercadolibre.com/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: MELI_CLIENT_ID,
-      client_secret: MELI_CLIENT_SECRET,
-      refresh_token: creds.refresh_token,
-    }),
-  });
+    const ITEMS_PER_PAGE = 50;
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error("Respuesta de error de ML al refrescar token:", errorBody);
-    throw new Error(`Error al refrescar el token de ML: ${response.statusText}`);
-  }
-  
-  const tokenData = await response.json();
-  
-  await supabaseClient
-    .from("meli_credentials")
-    .update({
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token,
-      last_updated: new Date().toISOString(),
-    })
-    .eq("user_id", creds.user_id);
-    
-  console.log("[DIAGNÓSTICO] Token de ML refrescado y guardado exitosamente.");
-  return tokenData.access_token;
-}
+    const filteredAndSearchedOrders = React.useMemo(() => {
+        let filtered = salesOrders;
 
-serve(async (req) => {
-  console.log("--------------------------------------------------");
-  console.log("Iniciando la función mercadolibre-sync-orders...");
+        if (filters.shippingType !== 'all') {
+            filtered = filtered.filter(order => order.shipping_type === filters.shippingType);
+        }
+        if (filters.status !== 'all') {
+            filtered = filtered.filter(order => order.status === filters.status);
+        }
 
-  if (req.method === "OPTIONS") {
-    console.log("Respondiendo a petición OPTIONS (preflight).");
-    return new Response("ok", { headers: corsHeaders });
-  }
+        if (searchTerm.trim()) {
+            const term = searchTerm.trim().toLowerCase();
+            filtered = filtered.filter(order =>
+                order.meli_order_id?.toString().includes(term) ||
+                order.buyer_name?.toLowerCase().includes(term) ||
+                order.shipping_id?.toString().includes(term) ||
+                order.order_items.some(item => item.sku?.toLowerCase().includes(term))
+            );
+        }
+        
+        return filtered.map(order => ({
+            ...order,
+            order_items: order.order_items.map(item => {
+                const productInfo = products.find(p => p.sku === item.sku);
+                const costWithVat = productInfo?.cost_price ? productInfo.cost_price * 1.21 : 0;
+                return {
+                    ...item,
+                    title: item.title || productInfo?.name || 'Producto Desconocido',
+                    images: productInfo?.image_urls || [item.thumbnail_url, 'https://via.placeholder.com/150'],
+                    cost_with_vat: costWithVat.toFixed(2),
+                };
+            })
+        }));
+    }, [salesOrders, products, searchTerm, filters]);
 
-  try {
-    console.log("Paso 1: Creando cliente de Supabase...");
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      { global: { headers: { Authorization: req.headers.get("Authorization")! } } }
+    useEffect(() => {
+        setPage(0);
+    }, [searchTerm, filters]);
+
+    const paginatedOrders = React.useMemo(() => {
+        const from = page * ITEMS_PER_PAGE;
+        const to = from + ITEMS_PER_PAGE;
+        return filteredAndSearchedOrders.slice(from, to);
+    }, [filteredAndSearchedOrders, page]);
+
+    const totalPages = Math.ceil(filteredAndSearchedOrders.length / ITEMS_PER_PAGE);
+
+    const handleSelectOrder = (orderId) => {
+        const newSelection = new Set(selectedOrders);
+        newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId);
+        setSelectedOrders(newSelection);
+    };
+
+    const handleSelectAll = (e) => {
+        if (e.target.checked) {
+            setSelectedOrders(new Set(paginatedOrders.map(o => o.id)));
+        } else {
+            setSelectedOrders(new Set());
+        }
+    };
+
+    const handleSyncSales = async () => {
+        setIsSyncing(true);
+        try {
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-orders');
+            if (error) throw error;
+            showMessage(data.message || 'Ventas sincronizadas.', 'success');
+            await fetchSalesOrders();
+        } catch (err) {
+            showMessage(`Error al sincronizar ventas: ${err.message}`, 'error');
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const handlePrintLabels = (format) => {
+        if (selectedOrders.size === 0) {
+            showMessage("Por favor, selecciona al menos una venta para imprimir.", "info");
+            return;
+        }
+        const selectedIds = Array.from(selectedOrders);
+        console.log(`Imprimiendo ${selectedIds.length} etiquetas en formato ${format}...`);
+        showMessage(`Función de imprimir en ${format} no implementada. IDs seleccionados: ${selectedIds.join(', ')}`, "warning");
+    };
+
+    const formatDate = (dateString) => {
+        if (!dateString) return 'N/A';
+        const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        return new Date(dateString).toLocaleDateString('es-AR', options);
+    };
+
+    return (
+        <div>
+            <div className="flex justify-between items-center mb-6">
+                 <h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2>
+                 <button 
+                     onClick={handleSyncSales} 
+                     disabled={isSyncing}
+                     className="px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed"
+                 >
+                     {isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas de ML'}
+                 </button>
+            </div>
+            
+            <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4">
+                 <input
+                    type="text"
+                    placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white"
+                />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <select value={filters.shippingType} onChange={e => setFilters({...filters, shippingType: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        <option value="all">Todos los Envíos</option>
+                        <option value="flex">Flex</option>
+                        <option value="mercado_envios">Mercado Envíos</option>
+                    </select>
+                    <select value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        <option value="all">Todos los Estados</option>
+                        <option value="Pendiente">Pendiente</option>
+                        <option value="En Preparación">En Preparación</option>
+                        <option value="Preparado">Preparado</option>
+                        <option value="Despachado">Despachado</option>
+                        <option value="cancelled">Canceladas</option>
+                    </select>
+                </div>
+            </div>
+
+            <div className="flex items-center gap-4 mb-4">
+                <div className="flex items-center">
+                    <input type="checkbox" onChange={handleSelectAll} checked={selectedOrders.size === paginatedOrders.length && paginatedOrders.length > 0} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
+                    <label className="ml-2 text-sm text-gray-400">Seleccionar todos ({selectedOrders.size} seleccionados)</label>
+                </div>
+                <button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">Imprimir PDF</button>
+                <button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">Imprimir ZPL</button>
+            </div>
+
+
+            <div className="bg-gray-800 border border-gray-700 rounded-lg">
+                {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : (
+                    <div className="divide-y divide-gray-700">
+                        {paginatedOrders.length > 0 ? paginatedOrders.map(order => (
+                            <div key={order.id} className="p-4 flex gap-4">
+                                <input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="mt-1 w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" />
+                                
+                                <div className="flex-grow">
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div>
+                                            <p className="text-white font-bold text-lg">Venta #{order.meli_order_id}</p>
+                                            <p className="text-sm text-gray-400">Comprador: {order.buyer_name || 'N/A'}</p>
+                                            <p className="text-xs text-gray-500">Fecha: {formatDate(order.created_at)}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xl font-semibold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount)}</p>
+                                            <div className="flex items-center justify-end gap-2 mt-1">
+                                                {order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}
+                                                <span className="px-2 py-1 text-xs rounded-full bg-gray-700 text-gray-300 capitalize">{order.shipping_type === 'flex' ? 'Flex' : 'Mercado Envíos'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="border-t border-gray-700 pt-3 space-y-4">
+                                        {order.order_items.map((item, index) => (
+                                            <div key={index} className="flex items-start gap-4">
+                                                <div className="flex-shrink-0 flex gap-2">
+                                                    <img 
+                                                        src={item.images[0]} 
+                                                        alt={item.title} 
+                                                        className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer hover:opacity-80 transition-opacity"
+                                                        onClick={() => setZoomedImageUrl(item.images[0])}
+                                                    />
+                                                    {item.images[1] && <img src={item.images[1]} alt={item.title} className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600" />}
+                                                </div>
+                                                <div className="flex-grow">
+                                                    <p className="text-white font-semibold">{item.title}</p>
+                                                    <p className="text-sm text-gray-400 font-mono bg-gray-900 inline-block px-2 py-0.5 rounded">SKU: {item.sku}</p>
+                                                </div>
+                                                <div className="text-right flex-shrink-0 w-48">
+                                                    <p className="text-gray-200 font-semibold">{item.quantity} x ${new Intl.NumberFormat('es-AR').format(item.unit_price || 0)}</p>
+                                                    <p className="text-xs text-yellow-400">Costo c/IVA: ${new Intl.NumberFormat('es-AR').format(item.cost_with_vat)}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )) : ( <p className="text-center p-8 text-gray-500">No se encontraron ventas. Prueba a sincronizar con Mercado Libre.</p> )}
+                    </div>
+                )}
+                 <div className="flex justify-between items-center p-4 border-t border-gray-700">
+                    <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0 || isLoading} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Anterior</button>
+                    <span className="text-gray-400">Página {page + 1} de {totalPages > 0 ? totalPages : 1}</span>
+                    <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1 || isLoading} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Siguiente</button>
+                </div>
+            </div>
+            
+            <ImageZoomModal 
+                imageUrl={zoomedImageUrl} 
+                onClose={() => setZoomedImageUrl(null)} 
+            />
+        </div>
     );
-    console.log("Cliente de Supabase creado exitosamente.");
+};
 
-    console.log("Paso 2: Obteniendo usuario autenticado...");
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("Usuario no autenticado. El token JWT podría ser inválido o haber expirado.");
-    console.log(`Usuario autenticado: ${user.id} (${user.email})`);
-
-    console.log("Paso 3: Obteniendo token de acceso de Mercado Libre...");
-    const accessToken = await getMeliToken(supabase, user.id);
-    console.log("Token de ML obtenido exitosamente.");
-
-    console.log("Paso 4: Obteniendo ID de vendedor de Mercado Libre...");
-    const userResp = await fetch("https://api.mercadolibre.com/users/me", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!userResp.ok) throw new Error(`No se pudo obtener el usuario de ML. Status: ${userResp.status}`);
-    const meliUser = await userResp.json();
-    console.log(`ID de Vendedor de ML: ${meliUser.id}`);
-
-    console.log("Paso 5: Buscando órdenes en la API de ML de los últimos 7 días...");
-    const date = new Date();
-    date.setDate(date.getDate() - 7);
-    const dateFrom = date.toISOString();
-
-    const ordersUrl = `https://api.mercadolibre.com/orders/search?seller=${meliUser.id}&order.date_created.from=${dateFrom}`;
-    console.log(`URL de consulta de órdenes: ${ordersUrl}`);
-    
-    const ordersResp = await fetch(ordersUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!ordersResp.ok) throw new Error(`Error al buscar órdenes en ML. Status: ${ordersResp.status}`);
-    
-    const { results: orders } = await ordersResp.json();
-    console.log(`Se encontraron ${orders.length} órdenes.`);
-
-    if (orders.length === 0) {
-      return new Response(JSON.stringify({ message: "No hay ventas nuevas para sincronizar." }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    console.log("Paso 6: Procesando y guardando cada orden en la base de datos...");
-    for (const [index, order] of orders.entries()) {
-      console.log(`Procesando orden ${index + 1}/${orders.length} (ID: ${order.id})...`);
-      
-      let shippingType = order.shipping?.logistic_type === 'flex' ? 'flex' : 'mercado_envios';
-
-      const saleOrderData = {
-        meli_order_id: order.id,
-        user_id: user.id,
-        buyer_name: order.buyer.nickname,
-        total_amount: order.total_amount,
-        shipping_id: order.shipping?.id,
-        shipping_type: shippingType,
-        status: 'Pendiente',
-        created_at: order.date_created,
-      };
-
-      const { data: savedOrder, error: orderError } = await supabase
-        .from('sales_orders')
-        .upsert(saleOrderData, { onConflict: 'meli_order_id' })
-        .select()
-        .single();
-      
-      if (orderError) {
-        console.error("Error al guardar la orden:", orderError);
-        throw orderError; // Detiene la ejecución si una orden falla
-      }
-
-      const orderItems = order.order_items.map(item => ({
-        order_id: savedOrder.id,
-        meli_item_id: item.item.id,
-        sku: item.item.seller_sku,
-        title: item.item.title,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        thumbnail_url: item.item.thumbnail,
-      }));
-      
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .upsert(orderItems, { onConflict: 'order_id, sku' });
-
-      if (itemsError) {
-        console.error("Error al guardar los items de la orden:", itemsError);
-        throw itemsError; // Detiene la ejecución
-      }
-    }
-    console.log("Todas las órdenes fueron procesadas exitosamente.");
-
-    return new Response(JSON.stringify({ message: `Sincronización completada. Se procesaron ${orders.length} ventas.` }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-
-  } catch (error) {
-    console.error("----------- ERROR FATAL EN LA FUNCIÓN -----------");
-    console.error("Mensaje de Error:", error.message);
-    console.error("Stack Trace:", error.stack);
-    console.error("-------------------------------------------------");
-    return new Response(JSON.stringify({ error: `Error interno en la función: ${error.message}` }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-});
+export default SalesView;
