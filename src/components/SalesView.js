@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN DEFINITIVA: Combina diseño, filtros, impresión, selección masiva y fotos corregidas.
+// VERSIÓN CON CORRECCIÓN DE 'index' no-undef
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -37,11 +37,9 @@ const SalesView = () => {
     
     const ITEMS_PER_PAGE = 50;
 
-    // Lógica para enriquecer y luego filtrar las órdenes
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         
-        // 1. Enriquece las órdenes con la info de los productos
         const enriched = salesOrders.map(order => ({
             ...order,
             order_items: order.order_items.map(item => {
@@ -55,14 +53,12 @@ const SalesView = () => {
             })
         }));
 
-        // 2. Filtra las órdenes ya enriquecidas
         let filtered = enriched;
 
         if (filters.shippingType !== 'all') {
             filtered = filtered.filter(order => order.shipping_type === filters.shippingType);
         }
         if (filters.status !== 'all') {
-            // Aquí puedes expandir la lógica para 'printed', 'ready_to_ship', etc.
             if (filters.status === 'daily_dispatch') {
                 const today = new Date().toISOString().split('T')[0];
                 filtered = filtered.filter(order => order.created_at.startsWith(today));
@@ -84,7 +80,6 @@ const SalesView = () => {
         return filtered;
     }, [salesOrders, products, searchTerm, filters]);
 
-    // Lógica de paginación
     const paginatedOrders = useMemo(() => {
         const from = page * ITEMS_PER_PAGE;
         const to = from + ITEMS_PER_PAGE;
@@ -93,16 +88,19 @@ const SalesView = () => {
 
     const totalPages = Math.ceil(processedOrders.length / ITEMS_PER_PAGE);
 
-    // Efecto para cargar datos iniciales
     useEffect(() => {
         if(salesOrders) setIsLoading(false);
     }, [salesOrders]);
     
-    // Resetear página al cambiar filtros o búsqueda
     useEffect(() => {
         setPage(0);
-        setSelectedOrders(new Set()); // Limpia la selección al cambiar de página o filtro
-    }, [searchTerm, filters, page]);
+        setSelectedOrders(new Set());
+    }, [searchTerm, filters]);
+    
+    // Limpia la selección si la página cambia
+    useEffect(() => {
+        setSelectedOrders(new Set());
+    }, [page]);
 
     const handleSelectOrder = (orderId) => {
         const newSelection = new Set(selectedOrders);
@@ -186,7 +184,7 @@ const SalesView = () => {
 
             <div className="flex items-center gap-4 mb-4">
                 <div className="flex items-center">
-                    <input type="checkbox" onChange={handleSelectAll} checked={selectedOrders.size > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
+                    <input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
                     <label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label>
                 </div>
                 <button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">Imprimir PDF</button>
@@ -215,7 +213,8 @@ const SalesView = () => {
                             </div>
 
                             <div className="p-4 space-y-3">
-                                {order.order_items.map(item => (
+                                {/* --- CORRECCIÓN AQUÍ --- */}
+                                {order.order_items.map((item, index) => (
                                     <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 rounded-md hover:bg-gray-700/50">
                                         <div className="flex-shrink-0 flex gap-2">
                                             {item.images && item.images[0] && <img src={item.images[0]} alt={item.title} className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[0])}/>}
