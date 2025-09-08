@@ -1,12 +1,12 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Usa la API oficial de ML para descargar etiquetas reales.
+// VERSIÓN CON CORRECCIÓN FINAL DE DESCARGA DE PDF
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
 
-// (El resto de los componentes y funciones iniciales no cambian)
+// (El resto de los componentes y funciones iniciales no cambian...)
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
@@ -21,7 +21,7 @@ const SalesView = () => {
     const handleSelectOrder = (orderId) => { const newSelection = new Set(selectedOrders); newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId); setSelectedOrders(newSelection); }; const handleSelectAll = (e) => { if (e.target.checked) { setSelectedOrders(new Set(paginatedOrders.map(o => o.id))); } else { setSelectedOrders(new Set()); } }; const handleSyncSales = async () => { setIsSyncing(true); try { const { data, error } = await supabase.functions.invoke('mercadolibre-sync-orders'); if (error) throw error; showMessage(data.message || 'Ventas sincronizadas.', 'success'); await fetchSalesOrders(); } catch (err) { showMessage(`Error al sincronizar ventas: ${err.message}`, 'error'); } finally { setIsSyncing(false); } }; const handleProcessOrder = async (orderId) => { setIsProcessing(orderId); try { const { data, error } = await supabase.functions.invoke('process-mercado-libre-order', { body: { order_id: orderId } }); if (error) throw error; showMessage(data.message, 'success'); await Promise.all([fetchSalesOrders(), fetchSupplierOrders()]); } catch (err) { showMessage(`Error al procesar la orden: ${err.message}`, 'error'); } finally { setIsProcessing(null); } };
     const formatDate = (dateString) => { if (!dateString) return 'N/A'; const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }; return new Date(dateString).toLocaleString('es-AR', options); }; const getStatusChip = (status) => { const statuses = { 'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' }, 'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' }, 'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' }, 'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' }, 'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' }, }; const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' }; return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>; };
 
-    // --- LÓGICA DE IMPRESIÓN ACTUALIZADA ---
+    // --- LÓGICA DE IMPRESIÓN CORREGIDA ---
     const handlePrintLabels = async (format) => {
         if (selectedOrders.size === 0) {
             showMessage("Por favor, selecciona al menos una venta para imprimir.", "info");
@@ -31,17 +31,15 @@ const SalesView = () => {
         showMessage(`Pidiendo etiquetas a Mercado Libre...`, 'info');
 
         try {
-            // 1. Recolectar todos los shipping_id de las órdenes seleccionadas
             const shipmentIds = Array.from(selectedOrders).map(orderId => {
                 const order = salesOrders.find(o => o.id === orderId);
                 return order ? order.shipping_id : null;
-            }).filter(Boolean); // Filtra los nulos si alguna orden no se encontró
+            }).filter(Boolean);
 
             if (shipmentIds.length === 0) {
                 throw new Error("No se encontraron IDs de envío para las órdenes seleccionadas.");
             }
             
-            // 2. Llamar a la nueva función con todos los IDs juntos
             const { data, error } = await supabase.functions.invoke('get-ml-labels', {
                 body: { 
                     shipment_ids: shipmentIds.join(','),
@@ -56,11 +54,13 @@ const SalesView = () => {
                 throw new Error(errorJson.error || 'Error desconocido del servidor.');
             }
 
-            // 3. Descargar el archivo recibido
-            const fileType = format === 'pdf' ? 'application/pdf' : 'text/plain';
+            // ----- CORRECCIÓN CLAVE AQUÍ -----
+            // 'data' ya es el Blob correcto, no hay que crear uno nuevo.
+            const blob = data; 
+            // ---------------------------------
+
             const fileName = `etiquetas-${Date.now()}.${format}`;
             
-            const blob = new Blob([data], { type: fileType });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.style.display = 'none';
