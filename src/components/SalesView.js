@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN DE DIAGNÓSTICO FINAL: Inspecciona la respuesta del 'invoke'.
+// VERSIÓN FINAL Y DEFINITIVA: Usa 'arraybuffer' para garantizar la integridad del archivo.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -27,6 +27,7 @@ const SalesView = () => {
             return;
         }
         setIsPrinting(true);
+        showMessage(`Pidiendo etiquetas a Mercado Libre...`, 'info');
 
         try {
             const shipmentIds = Array.from(selectedOrders).map(orderId => salesOrders.find(o => o.id === orderId)?.shipping_id).filter(Boolean);
@@ -34,20 +35,16 @@ const SalesView = () => {
             
             const { data, error } = await supabase.functions.invoke('get-ml-labels', {
                 body: { shipment_ids: shipmentIds.join(','), format: format },
-                responseType: 'blob'
+                // --- CAMBIO CLAVE: Pedimos los datos en formato puro ---
+                responseType: 'arraybuffer'
             });
 
-            // --- LÍNEAS DE DIAGNÓSTICO FINALES ---
-            console.log("Respuesta recibida en el frontend:", data);
-            console.log("Tipo de dato recibido:", typeof data);
-            if (data) {
-                console.log("¿Es un Blob?", data instanceof Blob);
-            }
-            // ------------------------------------
+            if (error) throw new Error(error.message);
 
-            if (error) throw error;
+            // --- CORRECCIÓN: Ahora construimos el Blob nosotros mismos desde el arraybuffer ---
+            const fileType = format === 'pdf' ? 'application/pdf' : 'text/plain';
+            const blob = new Blob([data], { type: fileType });
 
-            const blob = data;
             const fileName = `etiquetas-${Date.now()}.${format}`;
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
