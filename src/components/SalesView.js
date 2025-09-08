@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CON CORRECCIÓN FINAL DE DESCARGA DE PDF
+// VERSIÓN FINAL: Corregido el manejo del Blob para la descarga del PDF.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -11,7 +11,6 @@ const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/2
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
 const SalesView = () => {
-    // (Lógica de estados y filtros no cambia...)
     const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true); const [isSyncing, setIsSyncing] = useState(false); const [isProcessing, setIsProcessing] = useState(null); const [isPrinting, setIsPrinting] = useState(false); const [page, setPage] = useState(0); const [searchTerm, setSearchTerm] = useState(''); const [selectedOrders, setSelectedOrders] = useState(new Set()); const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' }); const [zoomedImageUrl, setZoomedImageUrl] = useState(null); const ITEMS_PER_PAGE = 50;
     const processedOrders = useMemo(() => { if (!salesOrders) return []; const enriched = salesOrders.map(order => ({ ...order, order_items: order.order_items.map(item => { const productInfo = products.find(p => p.sku === item.sku); const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A'; const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null; const images = productInfo?.image_urls || [secureThumbnail, 'https://via.placeholder.com/150']; return { ...item, cost_with_vat: costWithVat, images: images }; }) })); let filtered = enriched; if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); } if (filters.status !== 'all') { if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); } else { filtered = filtered.filter(order => order.status === filters.status); } } if (searchTerm.trim()) { const term = searchTerm.trim().toLowerCase(); filtered = filtered.filter(order => order.meli_order_id?.toString().includes(term) || order.buyer_name?.toLowerCase().includes(term) || order.shipping_id?.toString().includes(term) || order.order_items.some(item => item.sku?.toLowerCase().includes(term) || item.title?.toLowerCase().includes(term))); } return filtered; }, [salesOrders, products, searchTerm, filters]);
@@ -35,10 +34,15 @@ const SalesView = () => {
                 return order ? order.shipping_id : null;
             }).filter(Boolean);
 
-            if (shipmentIds.length === 0) throw new Error("No se encontraron IDs de envío.");
+            if (shipmentIds.length === 0) {
+                throw new Error("No se encontraron IDs de envío para las órdenes seleccionadas.");
+            }
             
             const { data, error } = await supabase.functions.invoke('get-ml-labels', {
-                body: { shipment_ids: shipmentIds.join(','), format: format },
+                body: { 
+                    shipment_ids: shipmentIds.join(','),
+                    format: format 
+                },
                 responseType: 'blob'
             });
 
