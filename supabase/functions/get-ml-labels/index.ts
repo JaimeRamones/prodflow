@@ -1,5 +1,5 @@
 // supabase/functions/get-ml-labels/index.ts
-// VERSIÓN FINAL: Solo recolecta y devuelve datos en formato JSON.
+// ESTA VERSIÓN ES LA CORRECTA. NO NECESITA CAMBIOS.
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
@@ -24,47 +24,43 @@ async function getMeliToken(supabaseClient, userId) {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") { return new Response("ok", { headers: corsHeaders }); }
-
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_ANON_KEY") ?? "", { global: { headers: { Authorization: req.headers.get("Authorization")! } } });
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Usuario no autenticado.");
-    
-    const { order_id } = await req.json();
-    if (!order_id) throw new Error("Falta el parámetro: order_id.");
 
-    // 1. Obtener datos de nuestra base de datos
-    const { data: orderData, error: orderError } = await supabase.from('sales_orders').select('*, order_items(*)').eq('id', order_id).single();
-    if (orderError) throw orderError;
+    const { shipment_ids, format } = await req.json();
+    if (!shipment_ids || !format) throw new Error("Faltan parámetros.");
 
-    // 2. Obtener datos del envío desde la API de Mercado Libre
     const accessToken = await getMeliToken(supabase, user.id);
-    const shippingResp = await fetch(`https://api.mercadolibre.com/shipments/${orderData.shipping_id}`, { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!shippingResp.ok) throw new Error("No se pudieron obtener los datos de envío de ML.");
-    const shippingData = await shippingResp.json();
+    
+    let url;
+    if (format === 'pdf') {
+        url = `https://api.mercadolibre.com/shipment_labels?shipment_ids=${shipment_ids}&savePdf=Y`;
+    } else if (format === 'zpl') {
+        url = `https://api.mercadolibre.com/shipment_labels?shipment_ids=${shipment_ids}&response_type=zpl2`;
+    } else {
+        throw new Error("Formato no soportado.");
+    }
 
-    // 3. Verificar el stock de cada item
-    const itemsWithStockInfo = await Promise.all(orderData.order_items.map(async (item) => {
-      const { data: product } = await supabase.from('products').select('stock_disponible').eq('sku', item.sku).single();
-      return {
-        ...item,
-        has_stock: product && product.stock_disponible >= item.quantity,
-      };
-    }));
+    const meliResponse = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
 
-    // 4. Devolver todos los datos necesarios como un solo objeto JSON
-    const labelData = {
-      order: orderData,
-      shipping: shippingData,
-      items: itemsWithStockInfo,
-    };
+    const contentType = meliResponse.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+        const errorJson = await meliResponse.json();
+        throw new Error(`Error de la API de ML: ${errorJson.message || JSON.stringify(errorJson)}`);
+    }
 
-    return new Response(JSON.stringify(labelData), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    if (!meliResponse.ok) {
+        const errorText = await meliResponse.text();
+        throw new Error(`Error de la API de ML (Status ${meliResponse.status}): ${errorText}`);
+    }
+
+    return new Response(meliResponse.body, {
+        headers: { ...corsHeaders, 'Content-Type': format === 'pdf' ? 'application/pdf' : 'text/plain' }
     });
-
   } catch (error) {
-    console.error("Error en get-ml-labels (data provider):", error);
+    console.error("Error en get-ml-labels:", error.message);
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
