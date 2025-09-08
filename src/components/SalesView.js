@@ -1,12 +1,12 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CON CORRECCIÓN FINAL EN EL ENVÍO DE PARÁMETROS
+// VERSIÓN FINAL: Usa la Serverless Function de Vercel.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
 
-// (El resto de los componentes y funciones iniciales no cambian...)
+// (Componentes de íconos no cambian)
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
@@ -22,13 +22,8 @@ const SalesView = () => {
     const formatDate = (dateString) => { if (!dateString) return 'N/A'; const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }; return new Date(dateString).toLocaleString('es-AR', options); }; const getStatusChip = (status) => { const statuses = { 'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' }, 'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' }, 'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' }, 'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' }, 'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' }, }; const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' }; return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>; };
 
     const handlePrintLabels = async (format) => {
-        if (selectedOrders.size === 0) {
-            showMessage("Por favor, selecciona al menos una venta.", "info");
-            return;
-        }
+        if (selectedOrders.size === 0) { showMessage("Por favor, selecciona al menos una venta.", "info"); return; }
         setIsPrinting(true);
-        showMessage("Pidiendo etiquetas a Mercado Libre...", "info");
-
         try {
             const shipmentIds = Array.from(selectedOrders).map(id => salesOrders.find(o => o.id === id)?.shipping_id).filter(Boolean);
             if (shipmentIds.length === 0) throw new Error("No se encontraron IDs de envío.");
@@ -36,15 +31,13 @@ const SalesView = () => {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("No se pudo obtener la sesión del usuario.");
             
-            const functionUrl = `${process.env.REACT_APP_SUPABASE_URL}/functions/v1/get-ml-labels`;
-            
-            const response = await fetch(functionUrl, {
+            // --- CAMBIO CLAVE: AHORA LLAMAMOS A NUESTRA PROPIA API EN VERCEL ---
+            const response = await fetch('/api/get-ml-labels', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${session.access_token}`,
                     'Content-Type': 'application/json'
                 },
-                // --- CORRECCIÓN FINAL AQUÍ ---
                 body: JSON.stringify({
                     shipment_ids: shipmentIds.join(','),
                     format: format
