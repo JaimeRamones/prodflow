@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CON CORRECCIÓN DEFINITIVA DE IMÁGENES
+// VERSIÓN COMPLETA: Integra filtros, impresión, selección y el nuevo flujo de "Procesar Pedido".
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -21,59 +21,37 @@ const ShippingIcon = () => (
     </div>
 );
 
-
 const SalesView = () => {
-    const { products, showMessage, salesOrders, fetchSalesOrders } = useContext(AppContext);
+    const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(null);
     const [page, setPage] = useState(0);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedOrders, setSelectedOrders] = useState(new Set());
-    const [filters, setFilters] = useState({
-        shippingType: 'all',
-        status: 'all',
-    });
+    const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' });
     const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
     
     const ITEMS_PER_PAGE = 50;
 
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
-        
         const enriched = salesOrders.map(order => ({
             ...order,
             order_items: order.order_items.map(item => {
                 const productInfo = products.find(p => p.sku === item.sku);
                 const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A';
-                
-                // --- LÓGICA DE DIAGNÓSTICO Y CORRECCIÓN DE IMAGEN ---
-                // Imprimimos en consola para verificar la URL que llega de la BD
-                // console.log(`Item: ${item.title}, thumbnail_url: ${item.thumbnail_url}`);
-
-                // Aseguramos que la URL sea HTTPS
                 const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null;
                 const images = productInfo?.image_urls || [secureThumbnail, 'https://via.placeholder.com/150'];
-
-                return {
-                    ...item,
-                    cost_with_vat: costWithVat,
-                    images: images,
-                };
+                return { ...item, cost_with_vat: costWithVat, images: images };
             })
         }));
 
         let filtered = enriched;
-        // Lógica de filtros... (sin cambios)
-        if (filters.shippingType !== 'all') {
-            filtered = filtered.filter(order => order.shipping_type === filters.shippingType);
-        }
+        if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); }
         if (filters.status !== 'all') {
-            if (filters.status === 'daily_dispatch') {
-                const today = new Date().toISOString().split('T')[0];
-                filtered = filtered.filter(order => order.created_at.startsWith(today));
-            } else {
-                filtered = filtered.filter(order => order.status === filters.status);
-            }
+            if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); }
+            else { filtered = filtered.filter(order => order.status === filters.status); }
         }
         if (searchTerm.trim()) {
             const term = searchTerm.trim().toLowerCase();
@@ -95,20 +73,10 @@ const SalesView = () => {
 
     const totalPages = Math.ceil(processedOrders.length / ITEMS_PER_PAGE);
 
-    useEffect(() => {
-        if(salesOrders) setIsLoading(false);
-    }, [salesOrders]);
-    
-    useEffect(() => {
-        setPage(0);
-        setSelectedOrders(new Set());
-    }, [searchTerm, filters]);
-    
-    useEffect(() => {
-        setSelectedOrders(new Set());
-    }, [page]);
+    useEffect(() => { if(salesOrders) setIsLoading(false); }, [salesOrders]);
+    useEffect(() => { setPage(0); setSelectedOrders(new Set()); }, [searchTerm, filters]);
+    useEffect(() => { setSelectedOrders(new Set()); }, [page]);
 
-    // Funciones handle (sin cambios)
     const handleSelectOrder = (orderId) => {
         const newSelection = new Set(selectedOrders);
         newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId);
@@ -131,54 +99,71 @@ const SalesView = () => {
         const selectedIds = Array.from(selectedOrders);
         showMessage(`Función de imprimir en ${format} no implementada. IDs: ${selectedIds.join(', ')}`, "warning");
     };
+
+    const handleProcessOrder = async (orderId) => {
+        setIsProcessing(orderId);
+        try {
+            const { data, error } = await supabase.functions.invoke('process-mercado-libre-order', { body: { order_id: orderId } });
+            if (error) throw error;
+            showMessage(data.message, 'success');
+            await Promise.all([fetchSalesOrders(), fetchSupplierOrders()]);
+        } catch (err) { showMessage(`Error al procesar la orden: ${err.message}`, 'error'); }
+        finally { setIsProcessing(null); }
+    };
+
     const formatDate = (dateString) => {
         if (!dateString) return 'N/A';
         const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
         return new Date(dateString).toLocaleString('es-AR', options);
     };
 
+    const getStatusChip = (status) => {
+        const statuses = {
+            'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' },
+            'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' },
+            'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' },
+            'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' },
+            'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' },
+        };
+        const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' };
+        return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>;
+    };
+
     return (
         <div>
-            {/* Header y Filtros (sin cambios) */}
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                 <h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2>
-                 <button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
-                     {isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}
-                 </button>
+                <h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2>
+                <button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600">
+                    {isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}
+                </button>
             </div>
+            
             <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4">
                 <input type="text" placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-400" />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <select value={filters.shippingType} onChange={e => setFilters({...filters, shippingType: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white">
-                        <option value="all">Todos los Envíos</option>
-                        <option value="flex">Flex</option>
-                        <option value="mercado_envios">Mercado Envíos</option>
+                        <option value="all">Todos los Envíos</option><option value="flex">Flex</option><option value="mercado_envios">Mercado Envíos</option>
                     </select>
                     <select value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white">
-                        <option value="all">Todos los Estados</option>
-                        <option value="printed">Etiqueta Impresa</option>
-                        <option value="ready_to_ship">Listo para Recolección</option>
-                        <option value="daily_dispatch">Envíos del Día</option>
-                        <option value="cancelled">Canceladas</option>
+                        <option value="all">Todos los Estados</option><option value="Recibido">Recibido</option><option value="Pendiente">Pendiente</option><option value="En Preparación">En Preparación</option><option value="daily_dispatch">Envíos del Día</option><option value="cancelled">Canceladas</option>
                     </select>
                 </div>
             </div>
+
             <div className="flex items-center gap-4 mb-4">
                 <div className="flex items-center">
-                    <input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" />
+                    <input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" />
                     <label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label>
                 </div>
                 <button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">Imprimir PDF</button>
                 <button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">Imprimir ZPL</button>
             </div>
 
-            {/* Listado de Ventas */}
             <div className="space-y-4">
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : (
                     paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                         <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                             <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                                {/* ... Cabecera de la orden sin cambios ... */}
                                 <div className="flex items-center gap-4">
                                     <input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" />
                                     <div>
@@ -189,17 +174,13 @@ const SalesView = () => {
                                 </div>
                                 <div className="text-right flex-shrink-0">
                                     <p className="text-2xl font-bold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount || 0)}</p>
-                                    <div className="flex items-center justify-end gap-2 mt-1">
-                                        {order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}
-                                    </div>
+                                    <div className="flex items-center justify-end gap-2 mt-1">{order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}</div>
                                 </div>
                             </div>
-
                             <div className="p-4 space-y-3">
                                 {order.order_items.map((item, index) => (
                                     <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 rounded-md hover:bg-gray-700/50">
                                         <div className="flex-shrink-0 flex gap-2">
-                                            {/* --- IMAGEN CORREGIDA Y MÁS ROBUSTA --- */}
                                             {item.images && item.images[0] && <img src={item.images[0]} alt={item.title} className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[0])}/>}
                                             {item.images && item.images[1] && <img src={item.images[1]} alt={item.title} className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[1])}/>}
                                         </div>
@@ -214,28 +195,31 @@ const SalesView = () => {
                                     </div>
                                 ))}
                             </div>
+                            <div className="p-4 bg-gray-800 border-t border-gray-700 flex justify-between items-center">
+                                <div>{getStatusChip(order.status)}</div>
+                                {order.status === 'Recibido' && (
+                                    <button onClick={() => handleProcessOrder(order.id)} disabled={isProcessing === order.id} className="px-5 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600">
+                                        {isProcessing === order.id ? 'Procesando...' : 'Procesar Pedido'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     )) : ( 
                         <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg">
-                            <svg className="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
                             <h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3>
-                            <p className="mt-1 text-sm text-gray-400">Prueba a sincronizar o ajusta tu búsqueda.</p>
+                            <p className="mt-1 text-sm text-gray-400">Prueba a sincronizar o ajusta tu búsqueda y filtros.</p>
                         </div>
                     )
                 )}
             </div>
 
-             {/* Paginación (sin cambios) */}
              <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700">
                 <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Anterior</button>
                 <span className="text-gray-400">Página {page + 1} de {totalPages > 0 ? totalPages : 1}</span>
                 <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Siguiente</button>
             </div>
 
-            <ImageZoomModal 
-                imageUrl={zoomedImageUrl} 
-                onClose={() => setZoomedImageUrl(null)} 
-            />
+            <ImageZoomModal imageUrl={zoomedImageUrl} onClose={() => setZoomedImageUrl(null)} />
         </div>
     );
 };
