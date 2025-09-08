@@ -21,7 +21,6 @@ const SalesView = () => {
     const handleSelectOrder = (orderId) => { const newSelection = new Set(selectedOrders); newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId); setSelectedOrders(newSelection); }; const handleSelectAll = (e) => { if (e.target.checked) { setSelectedOrders(new Set(paginatedOrders.map(o => o.id))); } else { setSelectedOrders(new Set()); } }; const handleSyncSales = async () => { setIsSyncing(true); try { const { data, error } = await supabase.functions.invoke('mercadolibre-sync-orders'); if (error) throw error; showMessage(data.message || 'Ventas sincronizadas.', 'success'); await fetchSalesOrders(); } catch (err) { showMessage(`Error al sincronizar ventas: ${err.message}`, 'error'); } finally { setIsSyncing(false); } }; const handleProcessOrder = async (orderId) => { setIsProcessing(orderId); try { const { data, error } = await supabase.functions.invoke('process-mercado-libre-order', { body: { order_id: orderId } }); if (error) throw error; showMessage(data.message, 'success'); await Promise.all([fetchSalesOrders(), fetchSupplierOrders()]); } catch (err) { showMessage(`Error al procesar la orden: ${err.message}`, 'error'); } finally { setIsProcessing(null); } };
     const formatDate = (dateString) => { if (!dateString) return 'N/A'; const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }; return new Date(dateString).toLocaleString('es-AR', options); }; const getStatusChip = (status) => { const statuses = { 'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' }, 'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' }, 'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' }, 'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' }, 'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' }, }; const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' }; return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>; };
 
-    // --- LÓGICA DE IMPRESIÓN CORREGIDA ---
     const handlePrintLabels = async (format) => {
         if (selectedOrders.size === 0) {
             showMessage("Por favor, selecciona al menos una venta para imprimir.", "info");
@@ -36,15 +35,10 @@ const SalesView = () => {
                 return order ? order.shipping_id : null;
             }).filter(Boolean);
 
-            if (shipmentIds.length === 0) {
-                throw new Error("No se encontraron IDs de envío para las órdenes seleccionadas.");
-            }
+            if (shipmentIds.length === 0) throw new Error("No se encontraron IDs de envío.");
             
             const { data, error } = await supabase.functions.invoke('get-ml-labels', {
-                body: { 
-                    shipment_ids: shipmentIds.join(','),
-                    format: format 
-                },
+                body: { shipment_ids: shipmentIds.join(','), format: format },
                 responseType: 'blob'
             });
 
@@ -54,13 +48,13 @@ const SalesView = () => {
                 throw new Error(errorJson.error || 'Error desconocido del servidor.');
             }
 
-            // ----- CORRECCIÓN CLAVE AQUÍ -----
-            // 'data' ya es el Blob correcto, no hay que crear uno nuevo.
-            const blob = data; 
-            // ---------------------------------
+            // ----- CORRECCIÓN DEFINITIVA AQUÍ -----
+            // 'data' ya es el Blob (el archivo) correcto que nos envía la función.
+            // No debemos crear un "new Blob" a partir de él.
+            const blob = data;
+            // ------------------------------------
 
             const fileName = `etiquetas-${Date.now()}.${format}`;
-            
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.style.display = 'none';
