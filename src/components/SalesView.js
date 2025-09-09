@@ -7,7 +7,6 @@ import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
 import JSZip from 'jszip'; // Importamos la librería para crear Zips
 
-// (El resto de los componentes y funciones iniciales no cambian...)
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
@@ -47,10 +46,8 @@ const SalesView = () => {
             const blob = await response.blob();
             if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
 
-            // --- LÓGICA MEJORADA PARA ZPL Y ZIP ---
             if (format === 'zpl') {
                 const zip = new JSZip();
-                // Añadimos el contenido ZPL (que está en el blob) a un archivo .txt dentro del zip
                 zip.file("Etiqueta de envio.txt", blob); 
                 const zipBlob = await zip.generateAsync({ type: "blob" });
                 
@@ -58,10 +55,11 @@ const SalesView = () => {
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = `Etiqueta MercadoEnvios-${Date.now()}.zip`;
+                document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);
+                a.remove();
             } else {
-                // La lógica para PDF sigue igual
                 const fileName = `etiquetas-${Date.now()}.pdf`;
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -81,7 +79,6 @@ const SalesView = () => {
         }
     };
     
-    // (El resto del JSX no cambia)
     return (
         <div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4"><h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2><button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600">{isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}</button></div>
@@ -91,7 +88,7 @@ const SalesView = () => {
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                     <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                         <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
+                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
                             <div className="text-right flex-shrink-0"><p className="text-2xl font-bold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount || 0)}</p><div className="flex items-center justify-end gap-2 mt-1">{order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}</div></div>
                         </div>
                         <div className="p-4 space-y-3">
@@ -114,4 +111,3 @@ const SalesView = () => {
 };
 
 export default SalesView;
-
