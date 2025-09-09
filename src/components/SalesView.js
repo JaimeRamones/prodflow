@@ -1,21 +1,56 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Descarga directamente el ZIP de ZPL que provee Mercado Libre.
+// VERSIÓN FINAL: Implementa una lectura de texto explícita y validación para ZPL.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
-// La librería JSZip ya no es necesaria para esta lógica, la eliminamos.
-// import JSZip from 'jszip'; 
+import JSZip from 'jszip';
 
-// (El resto de los componentes y funciones iniciales no cambian...)
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
 const SalesView = () => {
     const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true); const [isSyncing, setIsSyncing] = useState(false); const [isProcessing, setIsProcessing] = useState(null); const [isPrinting, setIsPrinting] = useState(false); const [page, setPage] = useState(0); const [searchTerm, setSearchTerm] = useState(''); const [selectedOrders, setSelectedOrders] = useState(new Set()); const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' }); const [zoomedImageUrl, setZoomedImageUrl] = useState(null); const ITEMS_PER_PAGE = 50;
-    const processedOrders = useMemo(() => { if (!salesOrders) return []; const enriched = salesOrders.map(order => ({ ...order, order_items: order.order_items.map(item => { const productInfo = products.find(p => p.sku === item.sku); const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A'; const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null; const images = productInfo?.image_urls || [secureThumbnail, 'https://via.placeholder.com/150']; return { ...item, cost_with_vat: costWithVat, images: images }; }) })); let filtered = enriched; if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); } if (filters.status !== 'all') { if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); } else { filtered = filtered.filter(order => order.status === filters.status); } } if (searchTerm.trim()) { const term = searchTerm.trim().toLowerCase(); filtered = filtered.filter(order => order.meli_order_id?.toString().includes(term) || order.buyer_name?.toLowerCase().includes(term) || order.shipping_id?.toString().includes(term) || order.order_items.some(item => item.sku?.toLowerCase().includes(term) || item.title?.toLowerCase().includes(term))); } return filtered; }, [salesOrders, products, searchTerm, filters]);
+    
+    const processedOrders = useMemo(() => {
+        if (!salesOrders) return [];
+        const enriched = salesOrders.map(order => ({
+            ...order,
+            order_items: order.order_items.map(item => {
+                const productInfo = products.find(p => p.sku === item.sku);
+                const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A';
+                const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null;
+                const productImages = productInfo?.image_urls?.map(url => (url ? url.replace(/^http:/, 'https:') : null)).filter(Boolean) || [];
+                let images = [...productImages];
+                if (secureThumbnail && !images.includes(secureThumbnail)) { images.unshift(secureThumbnail); }
+                if (images.length === 0 && secureThumbnail) { images.push(secureThumbnail); }
+                if (images.length === 0) { images.push('https://via.placeholder.com/150'); }
+                return { ...item, cost_with_vat: costWithVat, images: images };
+            })
+        }));
+        let filtered = enriched;
+        if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); }
+        if (filters.status !== 'all') {
+            if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); }
+            else { filtered = filtered.filter(order => order.status === filters.status); }
+        }
+        if (searchTerm.trim()) {
+            const term = searchTerm.trim().toLowerCase();
+            filtered = filtered.filter(order =>
+                order.meli_order_id?.toString().includes(term) ||
+                order.buyer_name?.toLowerCase().includes(term) ||
+                order.shipping_id?.toString().includes(term) ||
+                order.order_items.some(item =>
+                    item.sku?.toLowerCase().includes(term) ||
+                    item.title?.toLowerCase().includes(term)
+                )
+            );
+        }
+        return filtered;
+    }, [salesOrders, products, searchTerm, filters]);
+
     const paginatedOrders = useMemo(() => { const from = page * ITEMS_PER_PAGE; const to = from + ITEMS_PER_PAGE; return processedOrders.slice(from, to); }, [processedOrders, page]);
     const totalPages = Math.ceil(processedOrders.length / ITEMS_PER_PAGE);
     useEffect(() => { if(salesOrders) setIsLoading(false); }, [salesOrders]); useEffect(() => { setPage(0); setSelectedOrders(new Set()); }, [searchTerm, filters]); useEffect(() => { setSelectedOrders(new Set()); }, [page]);
@@ -45,25 +80,44 @@ const SalesView = () => {
                 throw new Error(errorData.error || `Error del servidor: ${response.statusText}`);
             }
 
-            const blob = await response.blob();
-            if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
+            // --- LÓGICA DE IMPRESIÓN MÁS ROBUSTA ---
+            if (format === 'zpl') {
+                // 1. Forzamos la lectura como TEXTO. Esto asegura la descompresión.
+                const zplText = await response.text();
 
-            // --- LÓGICA SIMPLIFICADA ---
-            // Ya no creamos un ZIP, simplemente descargamos el archivo que nos da el backend.
-            // Para ZPL, ya es un ZIP. Para PDF, es un PDF.
-            
-            const fileExtension = format === 'zpl' ? 'zip' : 'pdf';
-            const fileName = `Etiquetas-MercadoEnvios-${Date.now()}.${fileExtension}`;
-
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            document.body.appendChild(a);
-            a.click();
-            
-            window.URL.revokeObjectURL(url);
-            a.remove();
+                // 2. Verificamos que el contenido sea ZPL válido.
+                if (!zplText || !zplText.trim().startsWith('^XA')) {
+                    throw new Error('La respuesta recibida no parece ser un archivo ZPL válido. Contenido recibido: ' + zplText.substring(0, 100));
+                }
+                
+                // 3. Creamos el ZIP con el texto ya validado.
+                const zip = new JSZip();
+                zip.file("Etiqueta de envio.txt", zplText); 
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+                
+                const url = window.URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Etiqueta MercadoEnvios-${Date.now()}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            } else {
+                // La lógica para PDF no cambia
+                const blob = await response.blob();
+                if (blob.size === 0) throw new Error("El archivo PDF recibido está vacío.");
+                const fileName = `etiquetas-${Date.now()}.pdf`;
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            }
             
         } catch (err) {
             showMessage(`Error al generar etiquetas: ${err.message}`, 'error');
@@ -72,7 +126,6 @@ const SalesView = () => {
         }
     };
     
-    // (El resto del JSX no cambia)
     return (
         <div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4"><h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2><button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600">{isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}</button></div>
@@ -82,19 +135,61 @@ const SalesView = () => {
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                     <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                         <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
-                            <div className="text-right flex-shrink-0"><p className="text-2xl font-bold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount || 0)}</p><div className="flex items-center justify-end gap-2 mt-1">{order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}</div></div>
+                             <div className="flex items-center gap-4">
+                                <input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" />
+                                <div>
+                                    <p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p>
+                                    <p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p>
+                                    <p className="text-xs text-gray-400">{formatDate(order.created_at)}</p>
+                                </div>
+                            </div>
+                            <div className="flex-shrink-0 text-right">
+                                <p className="text-xl font-bold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount || 0)}</p>
+                                <div className="flex items-center justify-end gap-2 mt-1">
+                                    {order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}
+                                </div>
+                            </div>
                         </div>
                         <div className="p-4 space-y-3">
                             {order.order_items.map((item, index) => (
                                 <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 rounded-md hover:bg-gray-700/50">
-                                    <div className="flex-shrink-0 flex gap-2">{item.images && item.images[0] && <img src={item.images[0]} alt={item.title} className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[0])}/>}{item.images && item.images[1] && <img src={item.images[1]} alt={item.title} className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" onClick={() => setZoomedImageUrl(item.images[1])}/>}</div>
-                                    <div className="flex-grow"><p className="font-semibold text-white leading-tight">{item.title}</p><p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded mt-1">SKU: {item.sku || 'N/A'}</p></div>
-                                    <div className="text-right flex-shrink-0 w-48"><p className="text-white font-semibold">{item.quantity} x ${new Intl.NumberFormat('es-AR').format(item.unit_price || 0)}</p><p className="text-xs text-yellow-400 mt-1">Costo c/IVA: ${item.cost_with_vat}</p></div>
+                                    <div className="flex-shrink-0 flex gap-2">
+                                        {item.images && item.images[0] &&
+                                            <img
+                                                src={item.images[0]}
+                                                alt={item.title}
+                                                className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer"
+                                                onClick={() => setZoomedImageUrl(item.images[0])}
+                                            />
+                                        }
+                                        {item.images && item.images[1] &&
+                                            <img
+                                                src={item.images[1]}
+                                                alt={item.title}
+                                                className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer"
+                                                onClick={() => setZoomedImageUrl(item.images[1])}
+                                            />
+                                        }
+                                    </div>
+                                    <div className="flex-grow">
+                                        <p className="font-semibold text-white leading-tight">{item.title}</p>
+                                        <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded mt-1">SKU: {item.sku || 'N/A'}</p>
+                                    </div>
+                                    <div className="text-right flex-shrink-0 w-48">
+                                        <p className="text-white font-semibold">{item.quantity} x ${new Intl.NumberFormat('es-AR').format(item.unit_price || 0)}</p>
+                                        <p className="text-xs text-yellow-400 mt-1">Costo c/IVA: ${item.cost_with_vat}</p>
+                                    </div>
                                 </div>
                             ))}
                         </div>
-                        <div className="p-4 bg-gray-800 border-t border-gray-700 flex justify-between items-center"><div>{getStatusChip(order.status)}</div>{order.status === 'Recibido' && (<button onClick={() => handleProcessOrder(order.id)} disabled={isProcessing === order.id} className="px-5 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600">{isProcessing === order.id ? 'Procesando...' : 'Procesar Pedido'}</button>)}</div>
+                        <div className="p-4 bg-gray-800 border-t border-gray-700 flex justify-between items-center">
+                            <div>{getStatusChip(order.status)}</div>
+                            {order.status === 'Recibido' && (
+                                <button onClick={() => handleProcessOrder(order.id)} disabled={isProcessing === order.id} className="px-5 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600">
+                                    {isProcessing === order.id ? 'Procesando...' : 'Procesar Pedido'}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )) : ( <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg"><h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3><p className="mt-1 text-sm text-gray-400">Prueba a sincronizar o ajusta tu búsqueda y filtros.</p></div>))}
             </div>
