@@ -1,11 +1,12 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Implementa una lectura de texto explícita y validación para ZPL.
+// VERSIÓN FINAL: Descarga directamente el archivo ZIP (para ZPL) o PDF que envía el backend.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
-import JSZip from 'jszip';
+// JSZip ya no es necesario, porque no creamos un zip nuevo.
+// import JSZip from 'jszip'; 
 
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
@@ -80,44 +81,24 @@ const SalesView = () => {
                 throw new Error(errorData.error || `Error del servidor: ${response.statusText}`);
             }
 
-            // --- LÓGICA DE IMPRESIÓN MÁS ROBUSTA ---
-            if (format === 'zpl') {
-                // 1. Forzamos la lectura como TEXTO. Esto asegura la descompresión.
-                const zplText = await response.text();
+            // --- LÓGICA DE DESCARGA DIRECTA ---
+            const blob = await response.blob();
+            if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
 
-                // 2. Verificamos que el contenido sea ZPL válido.
-                if (!zplText || !zplText.trim().startsWith('^XA')) {
-                    throw new Error('La respuesta recibida no parece ser un archivo ZPL válido. Contenido recibido: ' + zplText.substring(0, 100));
-                }
-                
-                // 3. Creamos el ZIP con el texto ya validado.
-                const zip = new JSZip();
-                zip.file("Etiqueta de envio.txt", zplText); 
-                const zipBlob = await zip.generateAsync({ type: "blob" });
-                
-                const url = window.URL.createObjectURL(zipBlob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Etiqueta MercadoEnvios-${Date.now()}.zip`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                a.remove();
-            } else {
-                // La lógica para PDF no cambia
-                const blob = await response.blob();
-                if (blob.size === 0) throw new Error("El archivo PDF recibido está vacío.");
-                const fileName = `etiquetas-${Date.now()}.pdf`;
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                a.remove();
-            }
+            // Ya no hay lógica separada. Si es ZPL, el archivo ya es un .zip. Si es PDF, es un .pdf.
+            const fileExtension = format === 'zpl' ? 'zip' : 'pdf';
+            const fileName = `Etiquetas-MercadoEnvios-${Date.now()}.${fileExtension}`;
+
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+            a.remove();
             
         } catch (err) {
             showMessage(`Error al generar etiquetas: ${err.message}`, 'error');
@@ -191,7 +172,7 @@ const SalesView = () => {
                             )}
                         </div>
                     </div>
-                )) : ( <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg"><h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3><p className="mt-1 text-sm text-gray-400">Prueba a sincronizar o ajusta tu búsqueda y filtros.</p></div>))}
+                )) : ( <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg"><h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3><p className="text-sm text-gray-400">Prueba a sincronizar o ajusta tu búsqueda y filtros.</p></div>))}
             </div>
             <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700"><button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Anterior</button><span className="text-gray-400">Página {page + 1} de {totalPages > 0 ? totalPages : 1}</span><button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Siguiente</button></div>
             <ImageZoomModal imageUrl={zoomedImageUrl} onClose={() => setZoomedImageUrl(null)} />
