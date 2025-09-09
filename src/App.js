@@ -47,20 +47,33 @@ const AppProvider = ({ children }) => {
         setNotification({ show: true, message, type });
     };
 
+    // --- NUEVO: Suscripción a Tiempo Real para Ventas ---
     useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            setSession(session);
-            setLoading(false);
-        });
-        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-        });
+        const userId = session?.user?.id;
+        if (!userId) return;
+
+        console.log("Iniciando suscripción en tiempo real para ventas...");
+
+        const salesChannel = supabase
+            .channel('public:sales_orders')
+            .on(
+                'postgres_changes',
+                // Filtramos para recibir solo eventos del usuario actual
+                { event: '*', schema: 'public', table: 'sales_orders', filter: `user_id=eq.${userId}` },
+                (payload) => {
+                    console.log('Cambio en tiempo real recibido (Ventas):', payload.eventType);
+                    // Al detectar un cambio (ej. el Webhook insertó una venta), volvemos a cargar los datos.
+                    fetchSalesOrders(); 
+                }
+            )
+            .subscribe();
+
+        // Limpieza al cerrar sesión o desmontar
         return () => {
-            if (authListener && authListener.subscription) {
-                authListener.subscription.unsubscribe();
-            }
+            supabase.removeChannel(salesChannel);
         };
-    }, []);
+    }, [session, fetchSalesOrders]); 
+    // --------------------------------------------------
     
     // --- FUNCIONES PARA REFRESCAR DATOS (OPTIMIZADAS CON useCallback) ---
     const fetchProducts = useCallback(async () => {
