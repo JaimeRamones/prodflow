@@ -1,11 +1,11 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Incluye descarga de PDF y ZPL (individual y en ZIP).
+// VERSIÓN FINAL: Genera un ZIP con el archivo TXT para ZPL, igual que Mercado Libre.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
-import JSZip from 'jszip'; // <-- Importamos la librería para crear Zips
+import JSZip from 'jszip'; // Importamos la librería para crear Zips
 
 // (El resto de los componentes y funciones iniciales no cambian...)
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
@@ -47,19 +47,22 @@ const SalesView = () => {
             const blob = await response.blob();
             if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
 
-            // --- LÓGICA PARA MANEJAR ZIP O ARCHIVO INDIVIDUAL ---
-            if (format === 'zpl' && shipmentIds.length > 1) {
+            // --- LÓGICA MEJORADA PARA ZPL Y ZIP ---
+            if (format === 'zpl') {
                 const zip = new JSZip();
-                zip.file(`etiquetas-${Date.now()}.zpl`, blob); // MercadoLibre empaqueta todo en un solo archivo de texto
+                // Añadimos el contenido ZPL (que está en el blob) a un archivo .txt dentro del zip
+                zip.file("Etiqueta de envio.txt", blob); 
                 const zipBlob = await zip.generateAsync({ type: "blob" });
+                
                 const url = window.URL.createObjectURL(zipBlob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `etiquetas-zpl-${Date.now()}.zip`;
+                a.download = `Etiqueta MercadoEnvios-${Date.now()}.zip`;
                 a.click();
                 window.URL.revokeObjectURL(url);
             } else {
-                const fileName = `etiqueta-${shipmentIds[0]}.${format}`;
+                // La lógica para PDF sigue igual
+                const fileName = `etiquetas-${Date.now()}.pdf`;
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
@@ -88,7 +91,7 @@ const SalesView = () => {
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                     <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                         <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
+                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
                             <div className="text-right flex-shrink-0"><p className="text-2xl font-bold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount || 0)}</p><div className="flex items-center justify-end gap-2 mt-1">{order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}</div></div>
                         </div>
                         <div className="p-4 space-y-3">
@@ -111,3 +114,4 @@ const SalesView = () => {
 };
 
 export default SalesView;
+
