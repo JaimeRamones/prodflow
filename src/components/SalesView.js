@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Las imágenes de los productos ahora se cargan correctamente con HTTPS y tienen zoom.
+// VERSIÓN FINAL: Corrige las imágenes rotas Y la impresión de etiquetas ZPL.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -8,54 +8,49 @@ import ImageZoomModal from './ImageZoomModal';
 import JSZip from 'jszip'; // Importamos la librería para crear Zips
 
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
-const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 1.05 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.05 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
+const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
 const SalesView = () => {
     const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true); const [isSyncing, setIsSyncing] = useState(false); const [isProcessing, setIsProcessing] = useState(null); const [isPrinting, setIsPrinting] = useState(false); const [page, setPage] = useState(0); const [searchTerm, setSearchTerm] = useState(''); const [selectedOrders, setSelectedOrders] = useState(new Set()); const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' }); const [zoomedImageUrl, setZoomedImageUrl] = useState(null); const ITEMS_PER_PAGE = 50;
     
-    const processedOrders = useMemo(() => { 
-        if (!salesOrders) return []; 
-        const enriched = salesOrders.map(order => ({ 
-            ...order, 
-            order_items: order.order_items.map(item => { 
-                const productInfo = products.find(p => p.sku === item.sku); 
-                const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A'; 
+    const processedOrders = useMemo(() => {
+        if (!salesOrders) return [];
+        const enriched = salesOrders.map(order => ({
+            ...order,
+            order_items: order.order_items.map(item => {
+                const productInfo = products.find(p => p.sku === item.sku);
+                const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A';
                 
-                // --- CORRECCIÓN CLAVE PARA IMÁGENES ---
-                // Aseguramos que la URL de la miniatura sea HTTPS
-                const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null; 
+                // --- CORRECCIÓN DE IMÁGENES ---
+                const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null;
+                const images = (productInfo?.image_urls?.map(url => url.replace(/^http:/, 'https:'))) || [secureThumbnail, 'https://via.placeholder.com/150'];
                 
-                // Aseguramos que todas las URLs de imágenes del producto sean HTTPS
-                const images = productInfo?.image_urls 
-                    ? productInfo.image_urls.map(url => url.replace(/^http:/, 'https:')) 
-                    : [secureThumbnail, 'https://via.placeholder.com/150']; // Fallback si no hay imágenes
-                
-                return { ...item, cost_with_vat: costWithVat, images: images }; 
-            }) 
-        })); 
+                return { ...item, cost_with_vat: costWithVat, images: images };
+            })
+        }));
         
-        let filtered = enriched; 
-        if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); } 
-        if (filters.status !== 'all') { 
-            if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); } 
-            else { filtered = filtered.filter(order => order.status === filters.status); } 
-        } 
-        if (searchTerm.trim()) { 
-            const term = searchTerm.trim().toLowerCase(); 
-            filtered = filtered.filter(order => 
-                order.meli_order_id?.toString().includes(term) || 
-                order.buyer_name?.toLowerCase().includes(term) || 
-                order.shipping_id?.toString().includes(term) || 
-                order.order_items.some(item => 
-                    item.sku?.toLowerCase().includes(term) || 
+        let filtered = enriched;
+        if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); }
+        if (filters.status !== 'all') {
+            if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); }
+            else { filtered = filtered.filter(order => order.status === filters.status); }
+        }
+        if (searchTerm.trim()) {
+            const term = searchTerm.trim().toLowerCase();
+            filtered = filtered.filter(order =>
+                order.meli_order_id?.toString().includes(term) ||
+                order.buyer_name?.toLowerCase().includes(term) ||
+                order.shipping_id?.toString().includes(term) ||
+                order.order_items.some(item =>
+                    item.sku?.toLowerCase().includes(term) ||
                     item.title?.toLowerCase().includes(term)
                 )
-            ); 
-        } 
-        return filtered; 
+            );
+        }
+        return filtered;
     }, [salesOrders, products, searchTerm, filters]);
-    
+
     const paginatedOrders = useMemo(() => { const from = page * ITEMS_PER_PAGE; const to = from + ITEMS_PER_PAGE; return processedOrders.slice(from, to); }, [processedOrders, page]);
     const totalPages = Math.ceil(processedOrders.length / ITEMS_PER_PAGE);
     useEffect(() => { if(salesOrders) setIsLoading(false); }, [salesOrders]); useEffect(() => { setPage(0); setSelectedOrders(new Set()); }, [searchTerm, filters]); useEffect(() => { setSelectedOrders(new Set()); }, [page]);
@@ -88,6 +83,7 @@ const SalesView = () => {
             const blob = await response.blob();
             if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
 
+            // --- LÓGICA CORRECTA PARA ZPL Y PDF ---
             if (format === 'zpl') {
                 const zip = new JSZip();
                 zip.file("Etiqueta de envio.txt", blob); 
@@ -137,19 +133,19 @@ const SalesView = () => {
                             {order.order_items.map((item, index) => (
                                 <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 rounded-md hover:bg-gray-700/50">
                                     <div className="flex-shrink-0 flex gap-2">
-                                        {item.images && item.images[0] && 
-                                            <img 
-                                                src={item.images[0]} 
-                                                alt={item.title} 
-                                                className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
+                                        {item.images && item.images[0] &&
+                                            <img
+                                                src={item.images[0]}
+                                                alt={item.title}
+                                                className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer"
                                                 onClick={() => setZoomedImageUrl(item.images[0])}
                                             />
                                         }
-                                        {item.images && item.images[1] && 
-                                            <img 
-                                                src={item.images[1]} 
-                                                alt={item.title} 
-                                                className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
+                                        {item.images && item.images[1] &&
+                                            <img
+                                                src={item.images[1]}
+                                                alt={item.title}
+                                                className="hidden md:block w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer"
                                                 onClick={() => setZoomedImageUrl(item.images[1])}
                                             />
                                         }
