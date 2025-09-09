@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Contiene la corrección de imágenes (HTTPS) y la de etiquetas ZPL (JSZip).
+// VERSIÓN FINAL: Mantiene la lógica de etiquetas ZPL y corrige definitivamente las imágenes.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -22,11 +22,12 @@ const SalesView = () => {
                 const productInfo = products.find(p => p.sku === item.sku);
                 const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A';
                 
-                // --- CORRECCIÓN DE IMÁGENES ---
+                // --- CORRECCIÓN DE IMÁGENES APLICADA A TU ARCHIVO ---
                 const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null;
-                const images = (productInfo?.image_urls?.map(url => url.replace(/^http:/, 'https:'))) || [secureThumbnail, 'https://via.placeholder.com/150'];
+                // Esta línea ahora también convierte a HTTPS las URLs de la tabla 'products'
+                const images = (productInfo?.image_urls?.map(url => url ? url.replace(/^http:/, 'https:') : null).filter(Boolean)) || [secureThumbnail].filter(Boolean);
                 
-                return { ...item, cost_with_vat: costWithVat, images: images };
+                return { ...item, cost_with_vat: costWithVat, images: images.length > 0 ? images : ['https://via.placeholder.com/150'] };
             })
         }));
         
@@ -83,7 +84,6 @@ const SalesView = () => {
             const blob = await response.blob();
             if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
 
-            // --- LÓGICA CORRECTA PARA ZPL Y PDF ---
             if (format === 'zpl') {
                 const zip = new JSZip();
                 zip.file("Etiqueta de envio.txt", blob); 
