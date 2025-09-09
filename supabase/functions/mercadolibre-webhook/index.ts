@@ -3,7 +3,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
-// Usamos la clave configurada en el Paso 2.1
+// Usamos la clave de Service Role para autenticar el Broadcast y las operaciones de DB
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 // Función auxiliar para obtener el token (Adaptada para usar cliente Admin)
@@ -45,11 +45,10 @@ async function getMeliToken(supabaseAdmin: any, userId: string) {
 // Función para guardar la orden en Supabase (UPSERT)
 async function processOrder(order: any, supabaseUserId: string, supabaseAdmin: any) {
     const shippingId = order.shipping?.id;
-    // Detectar Flex (Ajusta si tu lógica es diferente)
     const isFlex = (order.tags && order.tags.includes('mshops_flex')) || order.shipping?.logistic_type === 'self_service';
     const shippingType = (shippingId && isFlex) ? 'flex' : 'mercado_envios';
     
-    let internalStatus = 'Recibido'; // Estado inicial
+    let internalStatus = 'Recibido';
     if (order.status === 'cancelled') {
         internalStatus = 'Cancelado';
     }
@@ -64,7 +63,6 @@ async function processOrder(order: any, supabaseUserId: string, supabaseAdmin: a
         shipping_type: shippingType,
         status: internalStatus,
         created_at: order.date_created,
-        // Guardamos estado de envío de ML para filtros de impresión
         shipping_status: order.shipping?.status || null,
         shipping_substatus: order.shipping?.substatus || null,
     };
@@ -78,7 +76,6 @@ async function processOrder(order: any, supabaseUserId: string, supabaseAdmin: a
 
     if (orderError) throw new Error(`Error guardando orden: ${orderError.message}`);
 
-    // Preparar y guardar items
     const orderItemsData = order.order_items.map((item: any) => ({
         sales_order_id: savedOrder.id,
         meli_item_id: item.item.id,
@@ -86,11 +83,9 @@ async function processOrder(order: any, supabaseUserId: string, supabaseAdmin: a
         sku: item.item.seller_sku || null,
         quantity: item.quantity,
         unit_price: item.unit_price,
-        // Guardamos la imagen también
         thumbnail_url: item.item.picture_url || null,
     }));
 
-    // Limpiamos items antiguos y añadimos los nuevos (para manejar cambios en la orden)
     await supabaseAdmin.from('order_items').delete().eq('sales_order_id', savedOrder.id);
     await supabaseAdmin.from('order_items').insert(orderItemsData);
 }
@@ -102,8 +97,7 @@ serve(async (req) => {
   try {
     const notification = await req.json();
     
-    // Solo nos interesan las órdenes
-    if (notification.topic !== 'orders_v2' || !notification.resource) {
+    if (notification.topic !== 'orders_v2') {
         return new Response("Ignored", { status: 200 });
     }
 
@@ -112,7 +106,6 @@ serve(async (req) => {
     // Inicializamos cliente Admin (con Service Role Key)
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Buscamos el usuario de Supabase correspondiente
     const { data: userMapping } = await supabaseAdmin
         .from('meli_credentials')
         .select('user_id')
@@ -125,9 +118,8 @@ serve(async (req) => {
     // 2. Obtener Access Token
     const accessToken = await getMeliToken(supabaseAdmin, supabaseUserId);
 
-    // 3. Obtener detalles de la orden de ML
+    // 3. Obtener detalles de la orden
     const orderId = notification.resource.split('/').pop();
-    // Incluimos shipments para el estado de la etiqueta
     const orderResponse = await fetch(`https://api.mercadolibre.com/orders/${orderId}?include=shipments`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -138,12 +130,31 @@ serve(async (req) => {
     // 4. Procesar y Guardar la orden
     await processOrder(orderData, supabaseUserId, supabaseAdmin);
 
+    // --- 5. NUEVO: Enviar señal de Broadcast ---
+    try {
+        // Creamos un canal específico para el usuario: "user_updates:UUID_DEL_USUARIO"
+        const channelName = `user_updates:${supabaseUserId}`;
+        const channel = supabaseAdmin.channel(channelName);
+        
+        // Enviamos la señal. El frontend escuchará el evento 'sales_update'.
+        await channel.send({
+          type: 'broadcast',
+          event: 'sales_update', 
+          payload: { source: 'webhook', orderId: orderId },
+        });
+        console.log(`Broadcast enviado a ${channelName}`);
+
+    } catch (broadcastError) {
+        // El error de broadcast no debe detener la respuesta a ML
+        console.error("Error al enviar Broadcast (no crítico):", broadcastError);
+    }
+    // --------------------------------------
+
     console.log(`Orden ${orderId} recibida y guardada (Webhook).`);
     return new Response("OK", { status: 200 });
 
   } catch (error) {
     console.error("Error en el webhook:", error);
-    // Respondemos 500 para que ML reintente
     return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 })
