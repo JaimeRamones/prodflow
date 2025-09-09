@@ -1,11 +1,11 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Mantiene la lógica de etiquetas ZPL y corrige definitivamente las imágenes.
+// VERSIÓN FINAL: Contiene la corrección de imágenes (HTTPS) y la de etiquetas ZPL (JSZip) funcionales.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
-import JSZip from 'jszip'; // Importamos la librería para crear Zips
+import JSZip from 'jszip';
 
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
@@ -21,16 +21,31 @@ const SalesView = () => {
             order_items: order.order_items.map(item => {
                 const productInfo = products.find(p => p.sku === item.sku);
                 const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A';
-                
-                // --- CORRECCIÓN DE IMÁGENES APLICADA A TU ARCHIVO ---
+
+                // --- Lógica de Imágenes Definitiva y Segura ---
                 const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null;
-                // Esta línea ahora también convierte a HTTPS las URLs de la tabla 'products'
-                const images = (productInfo?.image_urls?.map(url => url ? url.replace(/^http:/, 'https:') : null).filter(Boolean)) || [secureThumbnail].filter(Boolean);
+
+                const productImages = productInfo?.image_urls
+                    ?.map(url => (url ? url.replace(/^http:/, 'https:') : null))
+                    .filter(Boolean) || [];
+
+                let images = [...productImages];
+                if (secureThumbnail && !images.includes(secureThumbnail)) {
+                    images.unshift(secureThumbnail);
+                }
                 
-                return { ...item, cost_with_vat: costWithVat, images: images.length > 0 ? images : ['https://via.placeholder.com/150'] };
+                if (images.length === 0 && secureThumbnail) {
+                    images.push(secureThumbnail);
+                }
+
+                if (images.length === 0) {
+                    images.push('https://via.placeholder.com/150');
+                }
+
+                return { ...item, cost_with_vat: costWithVat, images: images };
             })
         }));
-        
+
         let filtered = enriched;
         if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); }
         if (filters.status !== 'all') {
