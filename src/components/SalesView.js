@@ -1,17 +1,17 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL Y CORRECTA: Usa FETCH para llamar a la Edge Function de Supabase.
+// VERSIÓN FINAL: Incluye descarga de PDF y ZPL (individual y en ZIP).
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ImageZoomModal from './ImageZoomModal';
+import JSZip from 'jszip'; // <-- Importamos la librería para crear Zips
 
 // (El resto de los componentes y funciones iniciales no cambian...)
 const FlexIcon = () => ( <div className="flex items-center gap-1 bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"></path></svg><span className="text-xs font-bold">FLEX</span></div> );
 const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"></path><path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v5a1 1 0 001 1h2.05a2.5 2.5 0 014.9 0H21a1 1 0 001-1V8a1 1 0 00-1-1h-7z"></path></svg><span className="text-xs font-bold">ENVÍOS</span></div> );
 
 const SalesView = () => {
-    // (Lógica de estados y filtros no cambia...)
     const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true); const [isSyncing, setIsSyncing] = useState(false); const [isProcessing, setIsProcessing] = useState(null); const [isPrinting, setIsPrinting] = useState(false); const [page, setPage] = useState(0); const [searchTerm, setSearchTerm] = useState(''); const [selectedOrders, setSelectedOrders] = useState(new Set()); const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' }); const [zoomedImageUrl, setZoomedImageUrl] = useState(null); const ITEMS_PER_PAGE = 50;
     const processedOrders = useMemo(() => { if (!salesOrders) return []; const enriched = salesOrders.map(order => ({ ...order, order_items: order.order_items.map(item => { const productInfo = products.find(p => p.sku === item.sku); const costWithVat = productInfo?.cost_price ? (productInfo.cost_price * 1.21).toFixed(2) : 'N/A'; const secureThumbnail = item.thumbnail_url ? item.thumbnail_url.replace(/^http:/, 'https:') : null; const images = productInfo?.image_urls || [secureThumbnail, 'https://via.placeholder.com/150']; return { ...item, cost_with_vat: costWithVat, images: images }; }) })); let filtered = enriched; if (filters.shippingType !== 'all') { filtered = filtered.filter(order => order.shipping_type === filters.shippingType); } if (filters.status !== 'all') { if (filters.status === 'daily_dispatch') { const today = new Date().toISOString().split('T')[0]; filtered = filtered.filter(order => order.created_at.startsWith(today)); } else { filtered = filtered.filter(order => order.status === filters.status); } } if (searchTerm.trim()) { const term = searchTerm.trim().toLowerCase(); filtered = filtered.filter(order => order.meli_order_id?.toString().includes(term) || order.buyer_name?.toLowerCase().includes(term) || order.shipping_id?.toString().includes(term) || order.order_items.some(item => item.sku?.toLowerCase().includes(term) || item.title?.toLowerCase().includes(term))); } return filtered; }, [salesOrders, products, searchTerm, filters]);
@@ -22,7 +22,7 @@ const SalesView = () => {
     const formatDate = (dateString) => { if (!dateString) return 'N/A'; const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }; return new Date(dateString).toLocaleString('es-AR', options); }; const getStatusChip = (status) => { const statuses = { 'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' }, 'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' }, 'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' }, 'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' }, 'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' }, }; const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' }; return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>; };
 
     const handlePrintLabels = async (format) => {
-        if (selectedOrders.size === 0) { showMessage("Por favor, selecciona al menos una venta para imprimir.", "info"); return; }
+        if (selectedOrders.size === 0) { showMessage("Por favor, selecciona al menos una venta.", "info"); return; }
         setIsPrinting(true);
         try {
             const shipmentIds = Array.from(selectedOrders).map(id => salesOrders.find(o => o.id === id)?.shipping_id).filter(Boolean);
@@ -31,19 +31,12 @@ const SalesView = () => {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("No se pudo obtener la sesión del usuario.");
             
-            // --- CORRECCIÓN CLAVE: APUNTAMOS A LA FUNCIÓN DE SUPABASE ---
             const functionUrl = `${process.env.REACT_APP_SUPABASE_URL}/functions/v1/get-ml-labels`;
             
             const response = await fetch(functionUrl, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${session.access_token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    shipment_ids: shipmentIds.join(','),
-                    format: format
-                })
+                headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shipment_ids: shipmentIds.join(','), format: format })
             });
 
             if (!response.ok) {
@@ -52,16 +45,31 @@ const SalesView = () => {
             }
 
             const blob = await response.blob();
-            const fileName = `etiquetas-${Date.now()}.${format}`;
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = fileName;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            a.remove();
+            if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
+
+            // --- LÓGICA PARA MANEJAR ZIP O ARCHIVO INDIVIDUAL ---
+            if (format === 'zpl' && shipmentIds.length > 1) {
+                const zip = new JSZip();
+                zip.file(`etiquetas-${Date.now()}.zpl`, blob); // MercadoLibre empaqueta todo en un solo archivo de texto
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+                const url = window.URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `etiquetas-zpl-${Date.now()}.zip`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+            } else {
+                const fileName = `etiqueta-${shipmentIds[0]}.${format}`;
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            }
             
         } catch (err) {
             showMessage(`Error al generar etiquetas: ${err.message}`, 'error');
@@ -75,12 +83,12 @@ const SalesView = () => {
         <div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4"><h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2><button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600">{isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}</button></div>
             <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4"><input type="text" placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-400" /><div className="grid grid-cols-2 md:grid-cols-4 gap-4"><select value={filters.shippingType} onChange={e => setFilters({...filters, shippingType: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"><option value="all">Todos los Envíos</option><option value="flex">Flex</option><option value="mercado_envios">Mercado Envíos</option></select><select value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"><option value="all">Todos los Estados</option><option value="Recibido">Recibido</option><option value="Pendiente">Pendiente</option><option value="En Preparación">En Preparación</option><option value="daily_dispatch">Envíos del Día</option><option value="cancelled">Canceladas</option></select></div></div>
-            <div className="flex items-center gap-4 mb-4"><div className="flex items-center"><input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border-gray-600 rounded" /><label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label></div><button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir PDF'}</button><button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir ZPL'}</button></div>
+            <div className="flex items-center gap-4 mb-4"><div className="flex items-center"><input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" /><label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label></div><button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir PDF'}</button><button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir ZPL'}</button></div>
             <div className="space-y-4">
                 {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                     <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                         <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
+                            <div className="flex items-center gap-4"><input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" /><div><p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p><p className="text-lg font-bold text-white">{order.buyer_name || 'Comprador Desconocido'}</p><p className="text-xs text-gray-400">{formatDate(order.created_at)}</p></div></div>
                             <div className="text-right flex-shrink-0"><p className="text-2xl font-bold text-white">${new Intl.NumberFormat('es-AR').format(order.total_amount || 0)}</p><div className="flex items-center justify-end gap-2 mt-1">{order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}</div></div>
                         </div>
                         <div className="p-4 space-y-3">
