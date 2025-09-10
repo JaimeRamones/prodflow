@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Corrige imágenes, muestra desglose de cobros y mantiene etiquetas ZPL funcionales.
+// VERSIÓN FINAL: Corrige el error de sintaxis y mantiene todas las funcionalidades.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -58,7 +58,7 @@ const SalesView = () => {
                 )
             );
         }
-        return filtered;
+        return filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     }, [processedOrders, searchTerm, filters]);
 
     const paginatedOrders = useMemo(() => { const from = page * ITEMS_PER_PAGE; const to = from + ITEMS_PER_PAGE; return filteredAndSortedOrders.slice(from, to); }, [filteredAndSortedOrders, page]);
@@ -123,12 +123,15 @@ const SalesView = () => {
 
     return (
         <div>
-            {/* ... (UI superior no cambia) ... */}
+            <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4"><h2 className="text-3xl font-bold text-white">Gestión de Ventas</h2><button onClick={handleSyncSales} disabled={isSyncing} className="flex-shrink-0 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600">{isSyncing ? 'Sincronizando...' : 'Sincronizar Ventas'}</button></div>
+            <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4"><input type="text" placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-400" /><div className="grid grid-cols-2 md:grid-cols-4 gap-4"><select value={filters.shippingType} onChange={e => setFilters({...filters, shippingType: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"><option value="all">Todos los Envíos</option><option value="flex">Flex</option><option value="mercado_envios">Mercado Envíos</option></select><select value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})} className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"><option value="all">Todos los Estados</option><option value="Recibido">Recibido</option><option value="Pendiente">Pendiente</option><option value="En Preparación">En Preparación</option><option value="daily_dispatch">Envíos del Día</option><option value="cancelled">Canceladas</option></select></div></div>
+            <div className="flex items-center gap-4 mb-4"><div className="flex items-center"><input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" /><label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label></div><button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir PDF'}</button><button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir ZPL'}</button></div>
+            
             <div className="space-y-4">
-                {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.map(order => (
+                {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                     <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                         <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                             <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-4">
                                 <input type="checkbox" checked={selectedOrders.has(order.id)} onChange={() => handleSelectOrder(order.id)} className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" />
                                 <div>
                                     <p className="text-sm font-semibold text-blue-400">Venta #{order.meli_order_id}</p>
@@ -197,7 +200,12 @@ const SalesView = () => {
                     </div>
                 )) : ( <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg"><h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3><p className="mt-1 text-sm text-gray-400">Prueba a sincronizar o ajusta tu búsqueda y filtros.</p></div>))}
             </div>
-            {/* ... (paginación y modal no cambian) ... */}
+            <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700">
+                <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0 || isLoading} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Anterior</button>
+                <span className="text-gray-400">Página {page + 1} de {totalPages > 0 ? totalPages : 1}</span>
+                <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1 || isLoading} className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50">Siguiente</button>
+            </div>
+            <ImageZoomModal imageUrl={zoomedImageUrl} onClose={() => setZoomedImageUrl(null)} />
         </div>
     );
 };
