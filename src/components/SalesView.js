@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL: Contiene etiquetas ZPL funcionales, imágenes corregidas y desglose plegable.
+// VERSIÓN FINAL Y COMPLETA: Incluye etiquetas ZPL funcionales, imágenes corregidas y desglose plegable.
 
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
@@ -11,10 +11,18 @@ const ShippingIcon = () => ( <div className="flex items-center gap-1 bg-blue-500
 
 const SalesView = () => {
     const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
-    const [isLoading, setIsLoading] = useState(true); const [isSyncing, setIsSyncing] = useState(false); const [isProcessing, setIsProcessing] = useState(null); const [isPrinting, setIsPrinting] = useState(false); const [page, setPage] = useState(0); const [searchTerm, setSearchTerm] = useState(''); const [selectedOrders, setSelectedOrders] = useState(new Set()); const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' }); const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(null);
+    const [isPrinting, setIsPrinting] = useState(false);
+    const [page, setPage] = useState(0);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedOrders, setSelectedOrders] = useState(new Set());
+    const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' });
+    const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
     const [expandedOrders, setExpandedOrders] = useState(new Set()); // Estado para el desglose plegable
     const ITEMS_PER_PAGE = 50;
-    
+
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         return salesOrders.map(order => {
@@ -63,9 +71,15 @@ const SalesView = () => {
 
     const paginatedOrders = useMemo(() => { const from = page * ITEMS_PER_PAGE; const to = from + ITEMS_PER_PAGE; return filteredAndSortedOrders.slice(from, to); }, [filteredAndSortedOrders, page]);
     const totalPages = Math.ceil(filteredAndSortedOrders.length / ITEMS_PER_PAGE);
-    useEffect(() => { if(salesOrders) setIsLoading(false); }, [salesOrders]); useEffect(() => { setPage(0); setSelectedOrders(new Set()); }, [searchTerm, filters]); useEffect(() => { setSelectedOrders(new Set()); }, [page]);
-    const handleSelectOrder = (orderId) => { const newSelection = new Set(selectedOrders); newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId); setSelectedOrders(newSelection); }; const handleSelectAll = (e) => { if (e.target.checked) { setSelectedOrders(new Set(paginatedOrders.map(o => o.id))); } else { setSelectedOrders(new Set()); } }; const handleSyncSales = async () => { setIsSyncing(true); try { const { data, error } = await supabase.functions.invoke('mercadolibre-sync-orders'); if (error) throw error; showMessage(data.message || 'Ventas sincronizadas.', 'success'); await fetchSalesOrders(); } catch (err) { showMessage(`Error al sincronizar ventas: ${err.message}`, 'error'); } finally { setIsSyncing(false); } }; const handleProcessOrder = async (orderId) => { setIsProcessing(orderId); try { const { data, error } = await supabase.functions.invoke('process-mercado-libre-order', { body: { order_id: orderId } }); if (error) throw error; showMessage(data.message, 'success'); await Promise.all([fetchSalesOrders(), fetchSupplierOrders()]); } catch (err) { showMessage(`Error al procesar la orden: ${err.message}`, 'error'); } finally { setIsProcessing(null); } };
-    const formatDate = (dateString) => { if (!dateString) return 'N/A'; const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }; return new Date(dateString).toLocaleString('es-AR', options); }; const getStatusChip = (status) => { const statuses = { 'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' }, 'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' }, 'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' }, 'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' }, 'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' }, }; const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' }; return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>; };
+    useEffect(() => { if(salesOrders) setIsLoading(false); }, [salesOrders]);
+    useEffect(() => { setPage(0); setSelectedOrders(new Set()); }, [searchTerm, filters]);
+    useEffect(() => { setSelectedOrders(new Set()); }, [page]);
+    const handleSelectOrder = (orderId) => { const newSelection = new Set(selectedOrders); newSelection.has(orderId) ? newSelection.delete(orderId) : newSelection.add(orderId); setSelectedOrders(newSelection); };
+    const handleSelectAll = (e) => { if (e.target.checked) { setSelectedOrders(new Set(paginatedOrders.map(o => o.id))); } else { setSelectedOrders(new Set()); } };
+    const handleSyncSales = async () => { setIsSyncing(true); try { const { data, error } = await supabase.functions.invoke('mercadolibre-sync-orders'); if (error) throw error; showMessage(data.message || 'Ventas sincronizadas.', 'success'); await fetchSalesOrders(); } catch (err) { showMessage(`Error al sincronizar ventas: ${err.message}`, 'error'); } finally { setIsSyncing(false); } };
+    const handleProcessOrder = async (orderId) => { setIsProcessing(orderId); try { const { data, error } = await supabase.functions.invoke('process-mercado-libre-order', { body: { order_id: orderId } }); if (error) throw error; showMessage(data.message, 'success'); await Promise.all([fetchSalesOrders(), fetchSupplierOrders()]); } catch (err) { showMessage(`Error al procesar la orden: ${err.message}`, 'error'); } finally { setIsProcessing(null); } };
+    const formatDate = (dateString) => { if (!dateString) return 'N/A'; const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }; return new Date(dateString).toLocaleString('es-AR', options); };
+    const getStatusChip = (status) => { const statuses = { 'Recibido': { text: 'Recibido', color: 'bg-cyan-500/20 text-cyan-300' }, 'Pendiente': { text: 'Pendiente', color: 'bg-yellow-500/20 text-yellow-300' }, 'En Preparación': { text: 'En Preparación', color: 'bg-blue-500/20 text-blue-300' }, 'Preparado': { text: 'Preparado', color: 'bg-indigo-500/20 text-indigo-300' }, 'Despachado': { text: 'Despachado', color: 'bg-green-500/20 text-green-300' }, }; const { text, color } = statuses[status] || { text: status, color: 'bg-gray-700 text-gray-300' }; return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${color}`}>{text}</span>; };
 
     const handlePrintLabels = async (format) => {
         if (selectedOrders.size === 0) { showMessage("Por favor, selecciona al menos una venta.", "info"); return; }
@@ -106,7 +120,7 @@ const SalesView = () => {
         const num = parseFloat(value);
         if (isNaN(num)) return '$N/A';
         return `$${new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num)}`;
-    }
+    };
 
     const toggleOrderDetails = (orderId) => {
         const newSet = new Set(expandedOrders);
@@ -125,7 +139,7 @@ const SalesView = () => {
             <div className="flex items-center gap-4 mb-4"><div className="flex items-center"><input type="checkbox" onChange={handleSelectAll} checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" /><label className="ml-2 text-sm text-gray-400">Seleccionar todos en esta página ({selectedOrders.size} seleccionados)</label></div><button onClick={() => handlePrintLabels('pdf')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir PDF'}</button><button onClick={() => handlePrintLabels('zpl')} disabled={selectedOrders.size === 0 || isPrinting} className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">{isPrinting ? 'Imprimiendo...' : 'Imprimir ZPL'}</button></div>
             
             <div className="space-y-4">
-                {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.map(order => (
+                {isLoading ? ( <p className="text-center p-8 text-gray-400">Cargando...</p> ) : ( paginatedOrders.length > 0 ? paginatedOrders.map(order => (
                     <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
                         <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
                              <div className="flex items-center gap-4">
@@ -161,7 +175,7 @@ const SalesView = () => {
                                     </div>
                                 </div>
                             ))}
-
+                            
                             {expandedOrders.has(order.id) && (
                                 <div className="border-t border-gray-700 mt-2 pt-2">
                                     <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
