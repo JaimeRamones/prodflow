@@ -76,38 +76,35 @@ const SalesView = () => {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("No se pudo obtener la sesión del usuario.");
             const functionUrl = `${process.env.REACT_APP_SUPABASE_URL}/functions/v1/get-ml-labels`;
+            
             const response = await fetch(functionUrl, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ shipment_ids: shipmentIds.join(','), format: format })
             });
-            if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.error || `Error del servidor: ${response.statusText}`); }
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || `Error del servidor: ${response.statusText}`);
+            }
+
             const blob = await response.blob();
             if (blob.size === 0) throw new Error("El archivo recibido está vacío.");
-            if (format === 'zpl') {
-                const zip = new JSZip();
-                zip.file("Etiqueta de envio.txt", blob); 
-                const zipBlob = await zip.generateAsync({ type: "blob" });
-                const url = window.URL.createObjectURL(zipBlob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Etiqueta MercadoEnvios-${Date.now()}.zip`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                a.remove();
-            } else {
-                const fileName = `etiquetas-${Date.now()}.pdf`;
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                a.remove();
-            }
+
+            const fileExtension = format === 'zpl' ? 'zip' : 'pdf';
+            const fileName = `Etiquetas-MercadoEnvios-${Date.now()}.${fileExtension}`;
+
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+            a.remove();
+            
         } catch (err) {
             showMessage(`Error al generar etiquetas: ${err.message}`, 'error');
         } finally {
