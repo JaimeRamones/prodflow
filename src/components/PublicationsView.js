@@ -27,13 +27,13 @@ const StatusPill = ({ status }) => {
 
 const ListingTypePill = ({ type }) => {
     const styles = {
-        gold_special: 'bg-yellow-600 text-white',
-        gold_pro: 'bg-amber-500 text-white',
+        gold_special: 'bg-amber-500 text-white',
+        gold_pro: 'bg-yellow-600 text-white',
         free: 'bg-gray-400 text-gray-900'
     };
      const text = {
-        gold_special: 'Premium',
-        gold_pro: 'Clásica',
+        gold_special: 'Clásica',
+        gold_pro: 'Premium',
         free: 'Gratuita'
     };
     return <span className={`px-2 py-1 text-xs font-semibold rounded-full ${styles[type] || styles.free}`}>{text[type] || type}</span>;
@@ -158,35 +158,57 @@ const PublicationsView = () => {
 
     // Nueva función: Actualización masiva de stock de seguridad
     const handleBulkSafetyStockUpdate = async () => {
-        if (!bulkSafetyStock || selectedPublications.size === 0) {
+        if (!bulkSafetyStock) {
             showMessage('Ingresa un valor para el stock de seguridad', 'error');
             return;
         }
 
         const safetyStockValue = parseInt(bulkSafetyStock) || 0;
+        const totalToUpdate = selectAllAcrossPages ? count : selectedPublications.size;
         
-        if (!window.confirm(`¿Actualizar el stock de seguridad a ${safetyStockValue} para ${selectedPublications.size} publicaciones?`)) {
+        if (totalToUpdate === 0) {
+            showMessage('No hay publicaciones seleccionadas', 'error');
+            return;
+        }
+
+        if (!window.confirm(`¿Actualizar el stock de seguridad a ${safetyStockValue} para ${totalToUpdate} publicaciones?`)) {
             return;
         }
 
         setIsUpdatingBulk(true);
         try {
-            const { error } = await supabase
-                .from('mercadolibre_listings')
-                .update({ safety_stock: safetyStockValue })
-                .in('id', Array.from(selectedPublications));
+            if (selectAllAcrossPages) {
+                // Actualización masiva para todas las publicaciones que coinciden con los filtros
+                const { error } = await supabase.functions.invoke('mercadolibre-bulk-update-safety-stock', {
+                    body: {
+                        filters: { searchTerm, statusFilter, typeFilter, syncFilter },
+                        safetyStock: safetyStockValue
+                    }
+                });
+                if (error) throw error;
+                
+                // Actualizar todas las publicaciones visibles
+                setPublications(pubs => pubs.map(p => ({ ...p, safety_stock: safetyStockValue })));
+            } else {
+                // Actualización solo para las publicaciones seleccionadas
+                const { error } = await supabase
+                    .from('mercadolibre_listings')
+                    .update({ safety_stock: safetyStockValue })
+                    .in('id', Array.from(selectedPublications));
 
-            if (error) throw error;
+                if (error) throw error;
 
-            // Actualizar estado local
-            const updatedIds = Array.from(selectedPublications);
-            setPublications(pubs => pubs.map(p => 
-                updatedIds.includes(p.id) ? { ...p, safety_stock: safetyStockValue } : p
-            ));
+                // Actualizar estado local solo para las seleccionadas
+                const updatedIds = Array.from(selectedPublications);
+                setPublications(pubs => pubs.map(p => 
+                    updatedIds.includes(p.id) ? { ...p, safety_stock: safetyStockValue } : p
+                ));
+            }
 
             setSelectedPublications(new Set());
+            setSelectAllAcrossPages(false);
             setBulkSafetyStock('');
-            showMessage(`Stock de seguridad actualizado para ${updatedIds.length} publicaciones`, 'success');
+            showMessage(`Stock de seguridad actualizado para ${totalToUpdate} publicaciones`, 'success');
         } catch (error) {
             showMessage(`Error en actualización masiva: ${error.message}`, 'error');
         } finally {
@@ -321,7 +343,7 @@ const PublicationsView = () => {
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Tipo de Publicación</label>
                         <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white">
-                            <option value="">Todos</option><option value="gold_special">Premium</option><option value="gold_pro">Clásica</option>
+                            <option value="">Todos</option><option value="gold_special">Clásicas</option><option value="gold_pro">Premium</option>
                         </select>
                     </div>
                     <div>
@@ -380,7 +402,7 @@ const PublicationsView = () => {
                                 </button>
                             </div>
                             <p className="text-xs text-gray-400 mt-1">
-                                Se aplicará a las {selectedPublications.size} publicaciones seleccionadas
+                                Se aplicará a las {selectAllAcrossPages ? count : selectedPublications.size} publicaciones {selectAllAcrossPages ? 'que coinciden con los filtros' : 'seleccionadas'}
                             </p>
                         </div>
                         
@@ -402,7 +424,7 @@ const PublicationsView = () => {
                         {/* Información adicional */}
                         <div className="flex items-end">
                             <div className="text-sm text-gray-300">
-                                <p>Publicaciones seleccionadas: <span className="font-semibold text-white">{selectedPublications.size}</span></p>
+                                <p>Publicaciones seleccionadas: <span className="font-semibold text-white">{selectAllAcrossPages ? count : selectedPublications.size}</span></p>
                                 {currentSKUInfo && (
                                     <p className="text-xs text-blue-300">
                                         SKU activo: {currentSKUInfo.sku}
