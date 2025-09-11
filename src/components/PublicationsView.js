@@ -1,3 +1,13 @@
+// Ruta: src/components/PublicationsView.js
+
+import React, { useState, useEffect, useContext, useMemo } from 'react';
+import { AppContext } from '../App';
+import { supabase } from '../supabaseClient';
+import ImageZoomModal from './ImageZoomModal';
+import EditPublicationModal from './EditPublicationModal';
+
+const ITEMS_PER_PAGE = 50;
+
 // --- Componentes de UI (Pills y Toggle) ---
 const StatusPill = ({ status }) => {
     const styles = {
@@ -36,7 +46,6 @@ const ToggleSwitch = ({ checked, onChange }) => (
     </label>
 );
 
-
 const PublicationsView = () => {
     const { products, showMessage } = useContext(AppContext);
     const [publications, setPublications] = useState([]);
@@ -54,6 +63,28 @@ const PublicationsView = () => {
     const [selectedPublications, setSelectedPublications] = useState(new Set());
     const [syncFilter, setSyncFilter] = useState('');
     const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false);
+    
+    // Estados para edición masiva
+    const [bulkSafetyStock, setBulkSafetyStock] = useState('');
+    const [isUpdatingBulk, setIsUpdatingBulk] = useState(false);
+
+    // Calcular información del SKU actual
+    const currentSKUInfo = useMemo(() => {
+        if (!searchTerm.trim()) return null;
+        
+        const skuPublications = publications.filter(pub => 
+            pub.sku && pub.sku.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        
+        if (skuPublications.length > 0) {
+            return {
+                sku: skuPublications[0].sku,
+                count: skuPublications.length,
+                publications: skuPublications
+            };
+        }
+        return null;
+    }, [publications, searchTerm]);
 
     useEffect(() => {
         const fetchPublications = async () => {
@@ -113,6 +144,53 @@ const PublicationsView = () => {
         } else {
             setSelectedPublications(new Set());
             setSelectAllAcrossPages(false);
+        }
+    };
+
+    // Nueva función: Seleccionar todas las publicaciones del SKU actual
+    const handleSelectAllBySKU = () => {
+        if (currentSKUInfo) {
+            const skuPublicationIds = currentSKUInfo.publications.map(pub => pub.id);
+            setSelectedPublications(new Set(skuPublicationIds));
+            showMessage(`Seleccionadas ${skuPublicationIds.length} publicaciones del SKU "${currentSKUInfo.sku}"`, 'success');
+        }
+    };
+
+    // Nueva función: Actualización masiva de stock de seguridad
+    const handleBulkSafetyStockUpdate = async () => {
+        if (!bulkSafetyStock || selectedPublications.size === 0) {
+            showMessage('Ingresa un valor para el stock de seguridad', 'error');
+            return;
+        }
+
+        const safetyStockValue = parseInt(bulkSafetyStock) || 0;
+        
+        if (!window.confirm(`¿Actualizar el stock de seguridad a ${safetyStockValue} para ${selectedPublications.size} publicaciones?`)) {
+            return;
+        }
+
+        setIsUpdatingBulk(true);
+        try {
+            const { error } = await supabase
+                .from('mercadolibre_listings')
+                .update({ safety_stock: safetyStockValue })
+                .in('id', Array.from(selectedPublications));
+
+            if (error) throw error;
+
+            // Actualizar estado local
+            const updatedIds = Array.from(selectedPublications);
+            setPublications(pubs => pubs.map(p => 
+                updatedIds.includes(p.id) ? { ...p, safety_stock: safetyStockValue } : p
+            ));
+
+            setSelectedPublications(new Set());
+            setBulkSafetyStock('');
+            showMessage(`Stock de seguridad actualizado para ${updatedIds.length} publicaciones`, 'success');
+        } catch (error) {
+            showMessage(`Error en actualización masiva: ${error.message}`, 'error');
+        } finally {
+            setIsUpdatingBulk(false);
         }
     };
     
@@ -215,6 +293,24 @@ const PublicationsView = () => {
             <h2 className="text-3xl font-bold text-white mb-6">Publicaciones de Mercado Libre</h2>
             <div className="mb-6 p-4 bg-gray-900/50 rounded-lg space-y-4">
                 <input type="text" placeholder="Buscar por ID de ML, título o SKU..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" />
+                
+                {/* Mostrar información del SKU si está buscando */}
+                {currentSKUInfo && (
+                    <div className="p-3 bg-blue-900/30 border border-blue-600 rounded-lg">
+                        <div className="flex items-center justify-between">
+                            <span className="text-blue-200">
+                                SKU "{currentSKUInfo.sku}" - {currentSKUInfo.count} publicaciones encontradas
+                            </span>
+                            <button 
+                                onClick={handleSelectAllBySKU}
+                                className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                            >
+                                Seleccionar todas ({currentSKUInfo.count})
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Estado</label>
@@ -243,19 +339,77 @@ const PublicationsView = () => {
                 </div>
             </div>
             
+            {/* Panel de acciones masivas mejorado */}
             {selectedPublications.size > 0 && (
-                <div className="mb-4 p-3 bg-blue-900/50 border border-blue-700 rounded-lg flex items-center justify-between">
-                    <div>
-                        <span className="text-white font-semibold">{selectAllAcrossPages ? `Todas las ${count}` : selectedPublications.size} seleccionada(s)</span>
-                        {isAllOnPageSelected && !selectAllAcrossPages && count > publications.length && (
-                             <button onClick={() => setSelectAllAcrossPages(true)} className="ml-4 text-blue-300 hover:text-blue-100 font-bold text-sm">
-                                Seleccionar las {count} publicaciones que coinciden.
-                            </button>
-                        )}
+                <div className="mb-4 p-4 bg-blue-900/50 border border-blue-700 rounded-lg space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <span className="text-white font-semibold">
+                                {selectAllAcrossPages ? `Todas las ${count}` : selectedPublications.size} seleccionada(s)
+                            </span>
+                            {isAllOnPageSelected && !selectAllAcrossPages && count > publications.length && (
+                                 <button onClick={() => setSelectAllAcrossPages(true)} className="ml-4 text-blue-300 hover:text-blue-100 font-bold text-sm">
+                                    Seleccionar las {count} publicaciones que coinciden.
+                                </button>
+                            )}
+                        </div>
                     </div>
-                    <div className="flex gap-2">
-                        <button onClick={() => handleBulkAction(true)} className="px-3 py-1 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700">Activar Sincro</button>
-                        <button onClick={() => handleBulkAction(false)} className="px-3 py-1 bg-yellow-600 text-white text-sm font-semibold rounded-md hover:bg-yellow-700">Desactivar Sincro</button>
+                    
+                    {/* Sección de edición masiva */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3 border-t border-blue-600">
+                        {/* Stock de seguridad masivo */}
+                        <div>
+                            <label className="block text-sm text-gray-300 mb-2 font-medium">
+                                Stock de Seguridad Masivo
+                            </label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="number" 
+                                    min="0"
+                                    value={bulkSafetyStock}
+                                    onChange={(e) => setBulkSafetyStock(e.target.value)}
+                                    className="flex-1 px-3 py-2 bg-gray-600 text-white text-sm rounded border border-gray-500 focus:border-blue-400"
+                                    placeholder="Ej: 5"
+                                />
+                                <button 
+                                    onClick={handleBulkSafetyStockUpdate}
+                                    disabled={isUpdatingBulk || !bulkSafetyStock}
+                                    className="px-4 py-2 bg-orange-600 text-white text-sm font-semibold rounded hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isUpdatingBulk ? 'Aplicando...' : 'Aplicar'}
+                                </button>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">
+                                Se aplicará a las {selectedPublications.size} publicaciones seleccionadas
+                            </p>
+                        </div>
+                        
+                        {/* Acciones de sincronización */}
+                        <div>
+                            <label className="block text-sm text-gray-300 mb-2 font-medium">
+                                Sincronización Masiva
+                            </label>
+                            <div className="flex gap-2">
+                                <button onClick={() => handleBulkAction(true)} className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded hover:bg-green-700">
+                                    Activar Sincro
+                                </button>
+                                <button onClick={() => handleBulkAction(false)} className="px-4 py-2 bg-yellow-600 text-white text-sm font-semibold rounded hover:bg-yellow-700">
+                                    Desactivar Sincro
+                                </button>
+                            </div>
+                        </div>
+                        
+                        {/* Información adicional */}
+                        <div className="flex items-end">
+                            <div className="text-sm text-gray-300">
+                                <p>Publicaciones seleccionadas: <span className="font-semibold text-white">{selectedPublications.size}</span></p>
+                                {currentSKUInfo && (
+                                    <p className="text-xs text-blue-300">
+                                        SKU activo: {currentSKUInfo.sku}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
