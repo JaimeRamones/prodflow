@@ -1,12 +1,10 @@
-// supabase/functions/mercadolibre-sync-orders/index.ts
-// VERSIÓN CON ESTADO INICIAL 'Recibido'
+// supabase/functions/mercadolibre-sync-orders/index.ts (ACTUALIZADO)
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
 import { corsHeaders } from "../_shared/cors.ts";
 
 async function getMeliToken(supabaseClient, userId) {
-    // ... (esta función no cambia)
     const { data: creds, error } = await supabaseClient.from("meli_credentials").select("access_token, refresh_token, last_updated, user_id").eq("user_id", userId).single();
     if (error || !creds) { throw new Error("Credenciales de ML no encontradas para este usuario."); }
     const tokenAge = (new Date().getTime() - new Date(creds.last_updated).getTime()) / 1000;
@@ -50,21 +48,32 @@ serve(async (req) => {
             const detailResp = await fetch(detailUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
             if (!detailResp.ok) { console.warn(`No se pudieron obtener detalles para la orden ${summaryOrder.id}, se omitirá.`); continue; }
             const order = await detailResp.json();
-            let shippingType = order.shipping?.logistic_type === 'flex' ? 'flex' : 'mercado_envios';
+            
+            const payment = order.payments?.[0] || {};
+            const shippingCost = payment.shipping_cost ?? 0;
+            const saleFee = order.order_items?.reduce((acc, item) => acc + (item.sale_fee || 0), 0) ?? 0;
+            const taxesAmount = payment.taxes_amount ?? 0;
+            const totalAmount = order.total_amount ?? 0;
+            // El neto es lo que ML te paga, ya descontando sus cargos.
+            const netReceivedAmount = totalAmount - saleFee;
+            
             const saleOrderData = {
                 meli_order_id: order.id,
                 user_id: user.id,
                 buyer_name: `${order.buyer.first_name || ''} ${order.buyer.last_name || ''}`.trim() || order.buyer.nickname,
-                total_amount: order.total_amount,
+                total_amount: totalAmount,
                 shipping_id: order.shipping?.id,
-                shipping_type: shippingType,
-                // ----- CAMBIO CLAVE AQUÍ -----
+                shipping_type: order.shipping?.logistic_type === 'flex' ? 'flex' : 'mercado_envios',
                 status: 'Recibido',
-                // -----------------------------
                 created_at: order.date_created,
+                shipping_cost: shippingCost,
+                sale_fee: saleFee,
+                taxes_amount: taxesAmount,
+                net_received_amount: netReceivedAmount,
             };
             const { data: savedOrder, error: orderError } = await supabase.from('sales_orders').upsert(saleOrderData, { onConflict: 'meli_order_id' }).select().single();
             if (orderError) throw orderError;
+            
             const orderItems = order.order_items.map(item => ({
                 order_id: savedOrder.id,
                 meli_item_id: item.item.id,

@@ -1,126 +1,274 @@
-// Ruta: supabase/functions/pre-sync-aggregator/index.ts
-// VERSIÓN V32: Lógica de agregación invertida y robusta.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
-const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
-
-const normalizeSku = (sku: string | null): string | null => sku ? String(sku).trim().toUpperCase() : null;
-const roundPrice = (price: any): number => {
-    const num = parseFloat(price);
-    return isNaN(num) || num < 0 ? 0 : Math.round(num * 100) / 100;
+const corsHeaders = { 
+    'Access-Control-Allow-Origin': '*', 
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' 
 };
 
-async function fetchAllPaginated(table: string, select: string, userId: string) {
-    let allData: any[] = [];
-    let page = 0;
-    const PAGE_SIZE = 1000;
-    let keepFetching = true;
+const supabaseAdmin = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '', 
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+);
 
-    while (keepFetching) {
-        const { data, error } = await supabaseAdmin
-            .from(table)
-            .select(select)
-            .eq('user_id', userId)
-            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+const BATCH_SIZE = 2000;
+const defaultMarkup = 80; // Markup global por defecto
 
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-            allData = allData.concat(data);
-            page++;
-        } else {
-            keepFetching = false;
-        }
-    }
-    return allData;
-}
-
+const normalizeSku = (sku: string | null): string | null => 
+    sku ? sku.trim() : null; // Solo quitamos espacios al inicio/final
 
 serve(async (req) => {
+    if (req.method === 'OPTIONS') {
+        return new Response('ok', { headers: corsHeaders });
+    }
+
     try {
-        const { userId } = await req.json();
-        if (!userId) throw new Error("userId es requerido.");
-        console.log(`Iniciando PRE-AGREGADOR V32 para Usuario ${userId}...`);
-
-        await supabaseAdmin.from('sync_cache').delete().eq('user_id', userId);
-
-        const { data: businessRulesData } = await supabaseAdmin.from('business_rules').select('config').eq('rule_type', 'Configuración General').single();
-        if (!businessRulesData) throw new Error("No se encontraron reglas de negocio.");
-        const rules = businessRulesData.config;
-
-        const allProducts = await fetchAllPaginated('products', 'sku, cost_price, stock_disponible', userId);
-        const supplierStock = await fetchAllPaginated('supplier_stock_items', 'sku, cost_price, quantity', userId);
-        const allListings = await fetchAllPaginated('mercadolibre_listings', 'sku', userId);
+        console.log('🚀 Iniciando pre-sync-aggregator con solución temporal...');
         
-        const aggregatedStockMap = new Map<string, { stock: number; cost: number }>();
-        (allProducts || []).forEach(p => {
-            const sku = normalizeSku(p.sku);
-            if (sku) aggregatedStockMap.set(sku, { stock: p.stock_disponible || 0, cost: (p.cost_price && p.cost_price > 0) ? p.cost_price : 0 });
+        // Limpiar tabla sync_cache
+        console.log('🧹 Limpiando tabla sync_cache...');
+        await supabaseAdmin.from('sync_cache').delete().neq('id', 0);
+        
+        // 1. Obtener todos los supplier_stock_items
+        console.log('📦 Obteniendo supplier_stock_items...');
+        const { data: supplierItems, error: supplierError } = await supabaseAdmin
+            .from('supplier_stock_items')
+            .select('sku, cost_price, quantity, warehouse_id');
+            
+        if (supplierError) throw supplierError;
+        console.log(`✅ Supplier items obtenidos: ${supplierItems?.length || 0}`);
+
+        // 2. Obtener todos los productos del inventario
+        console.log('📋 Obteniendo productos del inventario...');
+        const { data: inventoryItems, error: inventoryError } = await supabaseAdmin
+            .from('products')
+            .select('sku, cost_price');
+            
+        if (inventoryError) throw inventoryError;
+        console.log(`✅ Inventory items obtenidos: ${inventoryItems?.length || 0}`);
+
+        // 3. Obtener configuración de markups por proveedor
+        console.log('⚙️ Obteniendo configuración de suppliers...');
+        const { data: suppliers, error: suppliersError } = await supabaseAdmin
+            .from('suppliers')
+            .select('id, markup');
+            
+        if (suppliersError) throw suppliersError;
+        
+        const supplierMarkupMap = new Map();
+        suppliers?.forEach(supplier => {
+            supplierMarkupMap.set(supplier.id, supplier.markup || defaultMarkup);
         });
-        (supplierStock || []).forEach(s => {
-            const sku = normalizeSku(s.sku);
-            if (sku) {
-                const existing = aggregatedStockMap.get(sku) || { stock: 0, cost: 0 };
-                existing.stock += s.quantity || 0;
-                if (s.cost_price && s.cost_price > 0) existing.cost = s.cost_price;
-                aggregatedStockMap.set(sku, existing);
+        console.log(`✅ Suppliers configurados: ${suppliers?.length || 0}`);
+
+        // 4. Obtener warehouses para mapear supplier_id
+        console.log('🏢 Obteniendo warehouses...');
+        const { data: warehouses, error: warehousesError } = await supabaseAdmin
+            .from('warehouses')
+            .select('id, supplier_id');
+            
+        if (warehousesError) throw warehousesError;
+        
+        const warehouseSupplierMap = new Map();
+        warehouses?.forEach(warehouse => {
+            warehouseSupplierMap.set(warehouse.id, warehouse.supplier_id);
+        });
+
+        // Crear mapas para búsqueda rápida
+        console.log('🗺️ Creando mapas de búsqueda...');
+        const supplierItemsMap = new Map();
+        const inventoryItemsMap = new Map();
+        
+        // Mapear items de proveedores
+        supplierItems?.forEach(item => {
+            const normalizedSku = normalizeSku(item.sku);
+            if (normalizedSku) {
+                supplierItemsMap.set(normalizedSku, item);
             }
         });
-
-        const listingSkus = new Set((allListings || []).map(l => normalizeSku(l.sku)).filter(Boolean));
         
-        const finalCache = [];
-        const PREMIUM_SUFFIX = "-PR";
-        const MINIMUM_PRICE = 350.00;
-        const MAX_STOCK_ALLOWED = 999999;
-
-        for (const [sku, data] of aggregatedStockMap.entries()) {
-             if (data.cost > 0 && rules.defaultMarkup) {
-                const simplePrice = data.cost * (1 + rules.defaultMarkup / 100);
-                finalCache.push({ sku: sku, user_id: userId, calculated_stock: data.stock, calculated_price: simplePrice });
-
-                const premiumSku = `${sku}${PREMIUM_SUFFIX}`;
-                if (listingSkus.has(premiumSku) && rules.premiumMarkup) {
-                    const premiumPrice = simplePrice * (1 + rules.premiumMarkup / 100);
-                    finalCache.push({ sku: premiumSku, user_id: userId, calculated_stock: data.stock, calculated_price: premiumPrice });
+        // Mapear items de inventario
+        inventoryItems?.forEach(item => {
+            const normalizedSku = normalizeSku(item.sku);
+            if (normalizedSku) {
+                inventoryItemsMap.set(normalizedSku, item);
+            }
+        });
+        
+        console.log(`📊 Supplier items mapeados: ${supplierItemsMap.size}`);
+        console.log(`📊 Inventory items mapeados: ${inventoryItemsMap.size}`);
+        
+        // DEBUG: Verificar si SKUs específicos están en ambos mapas
+        const testSkus = ['ACONTI   CT 1126', 'AJOHNSON 2802A1'];
+        console.log('🔍 DEBUG - Verificando SKUs específicos:');
+        testSkus.forEach(sku => {
+            const normalized = normalizeSku(sku);
+            const supplierItem = supplierItemsMap.get(normalized);
+            const inventoryItem = inventoryItemsMap.get(normalized);
+            console.log(`🔍 SKU: "${sku}"`);
+            console.log(`   - Normalized: "${normalized}"`);
+            console.log(`   - In supplier map: ${supplierItemsMap.has(normalized)} ${supplierItem ? `(qty: ${supplierItem.quantity}, warehouse: ${supplierItem.warehouse_id})` : ''}`);
+            console.log(`   - In inventory map: ${inventoryItemsMap.has(normalized)} ${inventoryItem ? `(cost: ${inventoryItem.cost_price})` : ''}`);
+            
+            // DEBUG adicional: buscar variaciones del SKU en el mapa
+            console.log(`   - Buscando variaciones en supplier map:`);
+            let found = false;
+            for (let [mapSku, mapItem] of supplierItemsMap) {
+                if (mapSku.includes('ACONTI') && sku.includes('ACONTI')) {
+                    console.log(`     * Encontrado variación: "${mapSku}" (original: "${mapItem.sku}")`);
+                    found = true;
                 }
+                if (mapSku.includes('AJOHNSON') && sku.includes('AJOHNSON')) {
+                    console.log(`     * Encontrado variación: "${mapSku}" (original: "${mapItem.sku}")`);
+                    found = true;
+                }
+            }
+            if (!found) {
+                console.log(`     * No se encontraron variaciones para ${sku}`);
+            }
+        });
+        
+        // DEBUG: Mostrar algunos SKUs de supplier_stock_items
+        console.log('🔍 Primeros 5 SKUs en supplier map:');
+        let debugCount = 0;
+        for (let [sku, item] of supplierItemsMap) {
+            if (debugCount < 5) {
+                console.log(`   - "${sku}" (warehouse: ${item.warehouse_id}, qty: ${item.quantity})`);
+                debugCount++;
+            }
+        }
+
+        // Crear conjunto único de todos los SKUs
+        const allSkus = new Set([
+            ...Array.from(supplierItemsMap.keys()),
+            ...Array.from(inventoryItemsMap.keys())
+        ]);
+
+        console.log(`🎯 Total SKUs únicos a procesar: ${allSkus.size}`);
+
+        const syncCacheData: any[] = [];
+        let processedCount = 0;
+
+        // Procesar cada SKU único
+        for (const normalizedSku of allSkus) {
+            const originalSku = normalizedSku; // Ya está normalizado
+            
+            const supplierItem = supplierItemsMap.get(normalizedSku);
+            const inventoryItem = inventoryItemsMap.get(normalizedSku);
+            
+            // DEBUG específico para SKUs problemáticos
+            if (originalSku.includes('ACONTI') || originalSku.includes('AJOHNSON')) {
+                console.log(`🔍 DEBUG "${originalSku}":
+                  - Normalized: "${normalizedSku}"
+                  - Supplier found: ${!!supplierItem} ${supplierItem ? `(warehouse_id: ${supplierItem.warehouse_id})` : ''}
+                  - Inventory found: ${!!inventoryItem} ${inventoryItem ? `(warehouse_id: ${inventoryItem.warehouse_id})` : ''}`);
+            }
+            
+            let warehouse_id = null;
+            let supplier_id = null; 
+            let markup = defaultMarkup;
+            let source = 'undefined';
+            let totalStock = 0;
+
+            // LÓGICA DE PRIORIZACIÓN
+            if (supplierItem && inventoryItem) {
+                // SKU existe en ambos lugares: usar proveedor + sumar stock
+                warehouse_id = supplierItem.warehouse_id;
+                supplier_id = warehouseSupplierMap.get(warehouse_id);
+                markup = supplierMarkupMap.get(supplier_id) || defaultMarkup;
+                totalStock = (supplierItem.quantity || 0) + (inventoryItem.quantity || 0);
+                source = 'both';
                 
-                (rules.kitRules || []).forEach((rule: any) => {
-                    if(!rule.suffix) return;
-                    const kitSku = `${sku}${rule.suffix}`;
-                    if (listingSkus.has(kitSku)) {
-                        const quantity = Number(rule.quantity);
-                        if(quantity > 0){
-                           const kitStock = Math.floor(data.stock / quantity);
-                           const discount = Number(rule.discount) || 0;
-                           const kitPrice = simplePrice * quantity * (1 - (discount / 100));
-                           finalCache.push({ sku: kitSku, user_id: userId, calculated_stock: kitStock, calculated_price: kitPrice });
-                        }
-                    }
-                });
-             }
-        }
-        
-        const processedCache = finalCache.map(item => ({
-            ...item,
-            calculated_stock: Math.min(Math.max(0, item.calculated_stock), MAX_STOCK_ALLOWED),
-            calculated_price: item.calculated_price < MINIMUM_PRICE && item.calculated_price > 0 ? MINIMUM_PRICE : roundPrice(item.calculated_price)
-        }));
+                // Log específico para casos "both"
+                if (originalSku.includes('ACONTI') || originalSku.includes('AJOHNSON')) {
+                    console.log(`✅ SKU ${originalSku}: warehouse_id: ${warehouse_id}, supplier_id: ${supplier_id}, markup: ${markup}% (supplier_${supplier_id}) [source: ${source}]`);
+                }
+            } else if (supplierItem) {
+                // Solo en proveedor
+                warehouse_id = supplierItem.warehouse_id;
+                supplier_id = warehouseSupplierMap.get(warehouse_id);
+                markup = supplierMarkupMap.get(supplier_id) || defaultMarkup;
+                totalStock = supplierItem.quantity || 0;
+                source = 'supplier';
+            } else if (inventoryItem) {
+                // Solo en inventario (Grimax)
+                warehouse_id = 1; // Warehouse Grimax
+                supplier_id = 1; // Grimax
+                markup = defaultMarkup; // Usar markup global para Grimax
+                totalStock = inventoryItem.quantity || 0;
+                source = 'inventory';
+            }
 
-        if (processedCache.length > 0) {
-            const { error: cacheError } = await supabaseAdmin.from('sync_cache').insert(processedCache);
-            if (cacheError) throw cacheError;
-        }
-        console.log(`Pre-agregador V32 completado. Se han cacheado ${processedCache.length} SKUs. Pasando relevo a stock-aggregator.`);
-        
-        supabaseAdmin.functions.invoke('stock-aggregator-and-sync', { body: { userId, page: 0 } })
-            .catch(err => console.error(`Error al pasar relevo a stock-aggregator:`, err));
+            // Calcular precio final
+            const costPrice = supplierItem?.cost_price || inventoryItem?.cost_price || 0;
+            const finalPrice = costPrice * (1 + markup / 100);
 
-        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+            // Log para casos sin warehouse_id
+            if (!warehouse_id) {
+                console.log(`⚠️ SKU ${originalSku}: NO warehouse_id → markup ${markup}% (global) [source: ${source}]`);
+            }
+
+            syncCacheData.push({
+                sku: originalSku,
+                calculated_stock: totalStock,
+                calculated_price: finalPrice,
+                created_at: new Date().toISOString()
+            });
+
+            processedCount++;
+            if (processedCount % 5000 === 0) {
+                console.log(`📈 Procesados: ${processedCount}/${allSkus.size} SKUs`);
+            }
+        }
+
+        console.log(`📊 Stock agregado para ${allSkus.size} SKUs únicos`);
+
+        // Insertar en lotes
+        console.log('💾 Agregando stock de todas las fuentes...');
+        for (let i = 0; i < syncCacheData.length; i += BATCH_SIZE) {
+            const batch = syncCacheData.slice(i, i + BATCH_SIZE);
+            console.log(`📤 Insertando lote ${Math.floor(i/BATCH_SIZE) + 1}: ${batch.length} registros`);
+            
+            const { error: insertError } = await supabaseAdmin
+                .from('sync_cache')
+                .upsert(batch, { onConflict: 'sku' }); // Usar upsert para evitar duplicados
+                
+            if (insertError) {
+                console.error(`❌ Error insertando lote ${Math.floor(i/BATCH_SIZE) + 1}:`, insertError);
+                throw insertError;
+            }
+            
+            console.log(`✅ Insertados: ${Math.min(i + BATCH_SIZE, syncCacheData.length)}/${syncCacheData.length}`);
+        }
+
+        console.log(`🎉 Insertando ${syncCacheData.length} registros en lotes...`);
+        console.log('✅ Procesando ${syncCacheData.length} registros finales...');
+
+        // Obtener stats finales
+        const { count } = await supabaseAdmin
+            .from('sync_cache')
+            .select('*', { count: 'exact', head: true });
+
+        console.log(`📊 Listingss: ${count} registros`);
+
+        return new Response(
+            JSON.stringify({ 
+                success: true, 
+                message: `Pre-sync completado: ${count} registros en sync_cache`,
+                processed_skus: allSkus.size,
+                total_records: count
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+
     } catch (error) {
-        console.error(`Error fatal en pre-sync-aggregator V32: ${error.message}`);
-        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+        console.error('❌ Error en pre-sync-aggregator:', error);
+        return new Response(
+            JSON.stringify({ error: error.message }),
+            { 
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+            }
+        );
     }
 });

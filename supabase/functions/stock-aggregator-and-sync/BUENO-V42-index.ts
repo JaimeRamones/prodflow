@@ -1,13 +1,12 @@
-// Ruta: supabase/functions/kit-processor/index.ts
-// VERSIÓN V32.3: Obrero de Kits - CORREGIDO
+// Ruta: supabase/functions/stock-aggregator-and-sync/index.ts
+// VERSIÓN V41 - COMPLETA Y ESTABLE
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const BATCH_SIZE = 50;
-
+const BATCH_SIZE = 50; 
 const normalizeSku = (sku: string | null): string | null => sku ? String(sku).trim().toUpperCase() : null;
 
 async function getRefreshedToken(refreshToken: string, userId: string, supabaseClient: any): Promise<string> {
@@ -26,8 +25,7 @@ async function getLiveVariationId(meliId: string, listingSku: string, accessToke
     try {
         const response = await fetch(`https://api.mercadolibre.com/items/${meliId}?attributes=variations`, { method: 'GET', headers: { 'Authorization': `Bearer ${accessToken}` } });
         if (!response.ok) return null;
-        const data = await response.json();
-        const variations = data.variations;
+        const data = await response.json(); const variations = data.variations;
         if (!variations || variations.length === 0) return null;
         const matchingVariation = variations.find((v: any) => {
             if (v.attributes) { const skuAttr = v.attributes.find((attr: any) => attr.id === 'SELLER_SKU'); if (skuAttr && normalizeSku(skuAttr.value_name) === listingSku) return true; }
@@ -38,42 +36,41 @@ async function getLiveVariationId(meliId: string, listingSku: string, accessToke
     } catch (error) { return null; }
 }
 
-async function updateMeliItem(meliId: string, payload: any, accessToken: string, retries = 3, initialDelayMs = 1500): Promise<{ success: boolean }> {
+async function updateMeliItem(meliId: string, payload: any, accessToken: string, retries = 3, initialDelayMs = 2000): Promise<{ success: boolean }> {
     for (let i = 0; i < retries; i++) {
         try {
             const response = await fetch(`https://api.mercadolibre.com/items/${meliId}`, { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             if (response.ok) return { success: true };
             const status = response.status;
             const errorBody = await response.json().catch(() => null);
-            if (status === 400 && errorBody?.cause?.some((c: any) => c.code === 'item.price.invalid')) {
-                const cause = errorBody.cause.find((c: any) => c.code === 'item.price.invalid');
-                const match = cause.message.match(/\$ (\d+)/);
-                if (match && match[1]) {
-                    const minPrice = parseInt(match[1], 10);
-                    console.warn(`WARN: Precio bajo para ${meliId}. Meli exige > $${minPrice}. Reintentando con el precio mínimo.`);
-                    const newPayload = JSON.parse(JSON.stringify(payload));
-                    if (newPayload.variations && newPayload.variations.length > 0) newPayload.variations[0].price = minPrice;
-                    else newPayload.price = minPrice;
-                    const retryResponse = await fetch(`https://api.mercadolibre.com/items/${meliId}`, { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(newPayload) });
-                    if (retryResponse.ok) return { success: true };
-                }
+
+            if (status === 400) {
+                console.error(`ERROR DE VALIDACIÓN en ${meliId}. Causa: ${JSON.stringify(errorBody, null, 2)}`);
+                return { success: false };
             }
-            if ((status === 409 || status === 429) && i < retries - 1) {
-                await delay(initialDelayMs * Math.pow(2, i));
+
+            if ((status === 429 || status === 403) && i < retries - 1) {
+                const waitTime = initialDelayMs * Math.pow(2, i);
+                console.warn(`WARN: Conflicto (${status}) al actualizar ${meliId}. Reintentando en ${waitTime / 1000}s...`);
+                await delay(waitTime);
                 continue;
             }
+            
             console.error(`ERROR FINAL en ${meliId}. Status: ${status}. Causa: ${JSON.stringify(errorBody, null, 2)}`);
             return { success: false };
+
         } catch (networkError) {
             if (i < retries - 1) {
                 await delay(initialDelayMs * Math.pow(2, i));
                 continue;
             }
+            console.error(`ERROR DE RED FINAL en ${meliId}:`, networkError.message);
             return { success: false };
         }
     }
     return { success: false };
 }
+
 
 serve(async (req) => {
     let page = 0;
@@ -84,7 +81,7 @@ serve(async (req) => {
         page = body.page || 0;
         if (!userId) throw new Error("userId es requerido.");
         
-        console.log(`Iniciando OBRERO DE KITS (V32.3) para Usuario ${userId}, Lote ${page + 1}...`);
+        console.log(`Iniciando OBRERO DE SIMPLES (V41) para Usuario ${userId}, Lote ${page + 1}...`);
         
         const { data: tokenData } = await supabaseAdmin.from('meli_credentials').select('access_token, refresh_token, expires_at').eq('user_id', userId).single();
         if (!tokenData) throw new Error("No hay credenciales");
@@ -93,103 +90,29 @@ serve(async (req) => {
             accessToken = await getRefreshedToken(tokenData.refresh_token, userId, supabaseAdmin);
         }
 
-        // CORRECCIÓN: Consulta más flexible para business_rules
-        console.log("Buscando reglas de negocio...");
-        
-        // Intentar diferentes consultas para encontrar las reglas
-        let businessRulesData = null;
-        
-        // Intento 1: Con rule_type específico
-        const { data: rulesData1 } = await supabaseAdmin
-            .from('business_rules')
-            .select('config')
-            .eq('rule_type', 'Configuración General')
-            .single();
-        
-        if (rulesData1) {
-            businessRulesData = rulesData1;
-        } else {
-            // Intento 2: Sin filtro de rule_type
-            const { data: rulesData2 } = await supabaseAdmin
-                .from('business_rules')
-                .select('config')
-                .single();
-                
-            if (rulesData2) {
-                businessRulesData = rulesData2;
-            } else {
-                // Intento 3: Obtener todos los registros y usar el primero
-                const { data: rulesData3 } = await supabaseAdmin
-                    .from('business_rules')
-                    .select('config')
-                    .limit(1);
-                    
-                if (rulesData3 && rulesData3.length > 0) {
-                    businessRulesData = rulesData3[0];
-                }
-            }
-        }
-        
-        if (!businessRulesData) {
-            console.error("No se encontraron reglas de negocio en ningún intento");
-            
-            // Como fallback, usar valores por defecto
-            console.log("Usando valores por defecto para kits...");
-            const rules = {
-                kitRules: [
-                    { suffix: "/X2" },
-                    { suffix: "/X4" }
-                ]
-            };
-            businessRulesData = { config: rules };
-        }
-        
-        console.log("Reglas obtenidas:", JSON.stringify(businessRulesData.config, null, 2));
-        
-        const rules = businessRulesData.config;
+        const { data: rulesData } = await supabaseAdmin.from('business_rules').select('config').single();
         const PREMIUM_SUFFIX = "-PR";
-        let kitSuffixes = (rules.kitRules || []).map((r: any) => r.suffix).filter(Boolean);
-        
-        // Si no hay sufijos definidos, usar lista completa conocida
-        if (kitSuffixes.length === 0) {
-            kitSuffixes = ["/X2", "/X3", "/X4", "/X5", "/X6", "/X8", "/X10", "/X12", "/X16", "/X24"];
-        }
-        
-        console.log(`Sufijos de kits encontrados: ${kitSuffixes.join(', ')}, ${PREMIUM_SUFFIX}`);
-        
-        // Construir filtros para incluir SOLO kits y premium
-        // Usar patrón más amplio para capturar todos los /X
-        const filterConditions = [
-            `sku.like.%${PREMIUM_SUFFIX}`,
-            `sku.like.%/X%` // Incluye cualquier SKU que contenga /X
-        ];
-        const filterString = filterConditions.join(',');
-        
+        const kitSuffixes = (rulesData?.config?.kitRules || []).map((r: any) => r.suffix).filter(Boolean);
+
+        // Creamos un string de filtro para excluir kits y premium
+        const excludePatterns = kitSuffixes.map((s: string) => `sku.not.like.%${s}`);
+        excludePatterns.push(`sku.not.like.%${PREMIUM_SUFFIX}`);
+        const filterQuery = excludePatterns.join(',');
+
         const { data: listingsBatch, error } = await supabaseAdmin
             .from('mercadolibre_listings')
             .select('id, meli_id, meli_variation_id, sku, price, available_quantity')
-            .eq('user_id', userId)
-            .eq('sync_enabled', true)
-            .or(filterString)
+            .eq('user_id', userId).eq('sync_enabled', true)
+            .or(filterQuery) // Aplicamos el filtro de exclusión
             .range(page * BATCH_SIZE, (page + 1) * BATCH_SIZE - 1);
 
         if (error) throw error;
 
         const skusToFetch = (listingsBatch || []).map(l => normalizeSku(l.sku)).filter(Boolean);
-        
-        console.log(`Lote obtenido: ${listingsBatch?.length || 0} kits/premium`);
-        
         if (skusToFetch.length === 0 && (!listingsBatch || listingsBatch.length < BATCH_SIZE)) {
-             console.log(`Todos los lotes de kits completados. Pasando relevo a status-activator.`);
-             
-             try {
-                 await supabaseAdmin.functions.invoke('status-activator', { body: { userId, page: 0 } });
-                 console.log("✅ status-activator invocado exitosamente");
-             } catch (error) {
-                 console.error("❌ Error invocando status-activator:", error);
-             }
-             
-             return new Response(JSON.stringify({ success: true, message: `No hay más kits para procesar.` }), { headers: corsHeaders });
+            console.log(`Todos los lotes de simples completados. Pasando relevo a kit-processor.`);
+            supabaseAdmin.functions.invoke('kit-processor', { body: { userId, page: 0 } }).catch();
+            return new Response(JSON.stringify({ success: true, message: `No hay más productos simples.` }), { headers: corsHeaders });
         }
 
         const { data: cacheData } = await supabaseAdmin.from('sync_cache').select('*').in('sku', skusToFetch);
@@ -232,7 +155,7 @@ serve(async (req) => {
         const successfulUpdates = results.filter(r => r !== null);
         
         if (successfulUpdates.length > 0) {
-            console.log(`-> Actualizando localmente ${successfulUpdates.length} registros de kits en Supabase...`);
+            console.log(`-> Actualizando localmente ${successfulUpdates.length} registros en Supabase...`);
             for (const updateData of successfulUpdates) {
                 const { id, ...dataToUpdate } = updateData as any;
                 await supabaseAdmin.from('mercadolibre_listings').update(dataToUpdate).eq('id', id);
@@ -240,28 +163,17 @@ serve(async (req) => {
         }
 
         if (listingsBatch && listingsBatch.length === BATCH_SIZE) {
-            console.log(`Lote ${page + 1} de kits completado. Pasando relevo al siguiente lote.`);
-            
-            try {
-                await supabaseAdmin.functions.invoke('kit-processor', { body: { userId, page: page + 1 } });
-                console.log("✅ Siguiente lote de kits programado exitosamente");
-            } catch (error) {
-                console.error("❌ Error programando siguiente lote de kits:", error);
-            }
+            console.log(`Lote ${page + 1} de simples completado. Pasando relevo al siguiente lote.`);
+            await delay(1000); 
+            supabaseAdmin.functions.invoke('stock-aggregator-and-sync', { body: { userId, page: page + 1 } }).catch();
         } else {
-            console.log(`Todos los lotes de kits completados. Pasando relevo a status-activator.`);
-            
-            try {
-                await supabaseAdmin.functions.invoke('status-activator', { body: { userId, page: 0 } });
-                console.log("✅ status-activator invocado exitosamente");
-            } catch (error) {
-                console.error("❌ Error invocando status-activator:", error);
-            }
+            console.log(`Todos los lotes de simples completados. Pasando relevo a kit-processor.`);
+            supabaseAdmin.functions.invoke('kit-processor', { body: { userId, page: 0 } }).catch();
         }
 
-        return new Response(JSON.stringify({ success: true, message: `Lote ${page + 1} de kits completado.` }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ success: true, message: `Lote ${page + 1} de simples completado.` }), { headers: corsHeaders });
     } catch (error) {
-        console.error(`Error fatal en OBRERO DE KITS V32.3 (Lote ${page}): ${error.message}`);
+        console.error(`Error fatal en OBRERO DE SIMPLES V41 (Lote ${page}): ${error.message}`);
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
 });

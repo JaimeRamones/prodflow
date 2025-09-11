@@ -174,6 +174,31 @@ const PublicationsView = () => {
         }
     };
     
+    // Nueva función para manejar cambios de stock de seguridad
+    const handleSafetyStockChange = async (publicationId, newSafetyStock) => {
+        // Encontrar la publicación actual para tener el valor original
+        const currentPub = publications.find(p => p.id === publicationId);
+        
+        // Actualizar optimistamente en la UI
+        setPublications(pubs => pubs.map(p => 
+            p.id === publicationId ? { ...p, safety_stock: newSafetyStock } : p
+        ));
+        
+        // Actualizar en la base de datos
+        const { error } = await supabase
+            .from('mercadolibre_listings')
+            .update({ safety_stock: newSafetyStock })
+            .eq('id', publicationId);
+        
+        if (error) {
+            showMessage(`Error al actualizar stock de seguridad: ${error.message}`, 'error');
+            // Revertir cambio en caso de error
+            setPublications(pubs => pubs.map(p => 
+                p.id === publicationId ? { ...p, safety_stock: currentPub?.safety_stock || 0 } : p
+            ));
+        }
+    };
+    
     const handleSavePublication = async ({ newPrice, newSku }) => {
         if (!editingPublication) return;
         setIsSaving(true);
@@ -271,6 +296,19 @@ const PublicationsView = () => {
                                     <p className="text-sm text-gray-400">Vendidos: <span className="font-semibold text-white">{pub.sold_quantity ?? 0}</span></p>
                                     <p className="text-sm text-gray-400">Disponible: <span className="font-semibold text-green-400">{pub.available_quantity}</span></p>
                                     <p className="text-sm text-gray-400">Reservado: <span className="font-semibold text-yellow-400">{pub.stock_reservado}</span></p>
+                                    
+                                    {/* Stock de seguridad editable */}
+                                    <div className="text-sm text-gray-400 flex items-center justify-end mt-1">
+                                        <span className="mr-2">Seguridad:</span>
+                                        <input 
+                                            type="number" 
+                                            min="0"
+                                            value={pub.safety_stock || 0}
+                                            onChange={(e) => handleSafetyStockChange(pub.id, parseInt(e.target.value) || 0)}
+                                            className="w-16 px-2 py-1 bg-gray-600 text-white text-xs rounded border border-gray-500 focus:border-blue-400 focus:outline-none"
+                                            title="Stock de seguridad - se resta del stock disponible antes de sincronizar"
+                                        />
+                                    </div>
                                 </div>
                                 <div className="flex-shrink-0 pl-2">
                                     <div className="flex items-center gap-3">
