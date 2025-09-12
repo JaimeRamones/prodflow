@@ -262,7 +262,7 @@ const PublicationsView = () => {
         }
     };
     
-    // Función modificada para sincronización inmediata del stock de seguridad con activación/pausa automática
+    // Función modificada para sincronización inmediata del stock de seguridad
     const handleSafetyStockChange = async (publicationId, newSafetyStock, showMessageFlag = true) => {
         const currentPub = publications.find(p => p.id === publicationId);
         if (!currentPub) return;
@@ -270,7 +270,7 @@ const PublicationsView = () => {
         // Marcar item como sincronizando
         setSyncingItems(prev => new Set([...prev, publicationId]));
         
-        // Actualizar optimistamente en la UI
+        // Actualizar optimisticamente en la UI
         setPublications(pubs => pubs.map(p => 
             p.id === publicationId ? { ...p, safety_stock: newSafetyStock } : p
         ));
@@ -304,46 +304,29 @@ const PublicationsView = () => {
                     }
                 }
                 
-                // 5. Determinar si debe estar activa o pausada
-                const shouldBeActive = newAvailableStock > 0;
-                const currentlyActive = currentPub.status === 'active';
-                let newStatus = currentPub.status;
-                
-                if (shouldBeActive !== currentlyActive) {
-                    newStatus = shouldBeActive ? 'active' : 'paused';
-                }
-                
-                // 6. Sincronizar con MercadoLibre (stock + estado si cambió)
-                const syncPayload = {
-                    meliId: currentPub.meli_id,
-                    variationId: currentPub.meli_variation_id,
-                    availableQuantity: newAvailableStock,
-                    sku: currentPub.sku
-                };
-                
-                if (newStatus !== currentPub.status) {
-                    syncPayload.status = newStatus;
-                }
-                
+                // 5. Sincronizar directamente con MercadoLibre
                 const { error: syncError } = await supabase.functions.invoke('mercadolibre-update-single-item', {
-                    body: syncPayload
+                    body: {
+                        meliId: currentPub.meli_id,
+                        variationId: currentPub.meli_variation_id,
+                        availableQuantity: newAvailableStock,
+                        sku: currentPub.sku
+                    }
                 });
                 
                 if (syncError) throw syncError;
                 
-                // 7. Actualizar UI con el stock y estado sincronizados
+                // 6. Actualizar UI con el stock sincronizado
                 setPublications(pubs => pubs.map(p => 
                     p.id === publicationId ? { 
                         ...p, 
                         safety_stock: newSafetyStock,
-                        available_quantity: newAvailableStock,
-                        status: newStatus
+                        available_quantity: newAvailableStock 
                     } : p
                 ));
                 
                 if (showMessageFlag) {
-                    const statusMsg = newStatus !== currentPub.status ? ` y ${newStatus === 'active' ? 'activada' : 'pausada'}` : '';
-                    showMessage(`Stock de seguridad actualizado a ${newSafetyStock}. Stock disponible: ${newAvailableStock}${statusMsg}`, 'success');
+                    showMessage(`Stock de seguridad actualizado a ${newSafetyStock}. Stock disponible en ML: ${newAvailableStock}`, 'success');
                 }
             }
             
@@ -365,53 +348,16 @@ const PublicationsView = () => {
         }
     };
     
-    const handleSavePublication = async ({ newPrice, newSku, newStock }) => {
+    const handleSavePublication = async ({ newPrice, newSku }) => {
         if (!editingPublication) return;
         setIsSaving(true);
         try {
-            // Preparar payload de actualización
-            const updates = {};
-            
-            if (newPrice !== undefined && newPrice !== editingPublication.price) {
-                updates.price = newPrice;
-            }
-            
-            if (newSku !== undefined && newSku !== editingPublication.sku) {
-                updates.sku = newSku;
-            }
-            
-            // Si se cambió el stock, actualizarlo directamente
-            if (newStock !== undefined && newStock !== editingPublication.available_quantity) {
-                updates.availableQuantity = newStock;
-            }
-            
-            // Solo sincronizar si hay cambios
-            if (Object.keys(updates).length > 0) {
-                const { error } = await supabase.functions.invoke('mercadolibre-update-single-item', {
-                    body: {
-                        meliId: editingPublication.meli_id,
-                        variationId: editingPublication.meli_variation_id,
-                        ...updates
-                    }
-                });
-                
-                if (error) throw error;
-                
-                // Actualizar estado local
-                setPublications(pubs => pubs.map(p => 
-                    p.id === editingPublication.id ? { 
-                        ...p, 
-                        price: newPrice !== undefined ? newPrice : p.price,
-                        sku: newSku !== undefined ? newSku : p.sku,
-                        available_quantity: newStock !== undefined ? newStock : p.available_quantity
-                    } : p
-                ));
-                
-                showMessage('Publicación actualizada con éxito en MercadoLibre', 'success');
-            } else {
-                showMessage('No hay cambios para sincronizar', 'info');
-            }
-            
+            const { error } = await supabase.functions.invoke('mercadolibre-update-publication', {
+                body: { publication: editingPublication, newPrice, newSku },
+            });
+            if (error) throw error;
+            setPublications(pubs => pubs.map(p => p.id === editingPublication.id ? { ...p, price: newPrice, sku: newSku } : p));
+            showMessage('Publicación actualizada con éxito!', 'success');
             setEditingPublication(null);
         } catch (error) {
             showMessage(`Error al actualizar: ${error.message}`, 'error');
@@ -515,7 +461,7 @@ const PublicationsView = () => {
                                 </button>
                             </div>
                             <p className="text-xs text-gray-400 mt-1">
-                                Se aplicará y sincronizará inmediatamente con ML. Activará/pausará automáticamente.
+                                Se aplicará y sincronizará inmediatamente con ML para {selectAllAcrossPages ? count : selectedPublications.size} publicaciones
                             </p>
                         </div>
                         
@@ -598,7 +544,7 @@ const PublicationsView = () => {
                                 <div className="flex-shrink-0 pl-2">
                                     <div className="flex items-center gap-3">
                                         <ToggleSwitch checked={pub.sync_enabled === null ? true : pub.sync_enabled} onChange={() => handleSyncToggle(pub)} />
-                                        <button onClick={() => setEditingPublication(pub)} className="p-2 text-gray-400 hover:text-white" title="Editar SKU, Precio y Stock">
+                                        <button onClick={() => setEditingPublication(pub)} className="p-2 text-gray-400 hover:text-white" title="Editar SKU y Precio">
                                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L16.732 3.732z"></path></svg>
                                         </button>
                                     </div>
@@ -615,15 +561,7 @@ const PublicationsView = () => {
             </div>
 
             <ImageZoomModal imageUrl={zoomedImageUrl} onClose={() => setZoomedImageUrl(null)} />
-            {editingPublication && ( 
-                <EditPublicationModal 
-                    publication={editingPublication} 
-                    onClose={() => setEditingPublication(null)} 
-                    onSave={handleSavePublication} 
-                    isSaving={isSaving}
-                    allowStockEdit={true} 
-                /> 
-            )}
+            {editingPublication && ( <EditPublicationModal publication={editingPublication} onClose={() => setEditingPublication(null)} onSave={handleSavePublication} isSaving={isSaving} /> )}
         </div>
     );
 };
