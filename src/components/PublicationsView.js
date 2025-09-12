@@ -67,6 +67,9 @@ const PublicationsView = () => {
     // Estados para edición masiva
     const [bulkSafetyStock, setBulkSafetyStock] = useState('');
     const [isUpdatingBulk, setIsUpdatingBulk] = useState(false);
+    
+    // Estado para sincronización inmediata
+    const [syncingItems, setSyncingItems] = useState(new Set());
 
     // Calcular información del SKU actual
     const currentSKUInfo = useMemo(() => {
@@ -171,7 +174,7 @@ const PublicationsView = () => {
             return;
         }
 
-        if (!window.confirm(`¿Actualizar el stock de seguridad a ${safetyStockValue} para ${totalToUpdate} publicaciones?`)) {
+        if (!window.confirm(`¿Actualizar el stock de seguridad a ${safetyStockValue} para ${totalToUpdate} publicaciones y sincronizar inmediatamente con MercadoLibre?`)) {
             return;
         }
 
@@ -179,7 +182,7 @@ const PublicationsView = () => {
         try {
             if (selectAllAcrossPages) {
                 // Actualización masiva para todas las publicaciones que coinciden con los filtros
-                const { error } = await supabase.functions.invoke('mercadolibre-bulk-update-safety-stock', {
+                const { error } = await supabase.functions.invoke('mercadolibre-bulk-update-safety-stock-immediate', {
                     body: {
                         filters: { searchTerm, statusFilter, typeFilter, syncFilter },
                         safetyStock: safetyStockValue
@@ -190,25 +193,20 @@ const PublicationsView = () => {
                 // Actualizar todas las publicaciones visibles
                 setPublications(pubs => pubs.map(p => ({ ...p, safety_stock: safetyStockValue })));
             } else {
-                // Actualización solo para las publicaciones seleccionadas
-                const { error } = await supabase
-                    .from('mercadolibre_listings')
-                    .update({ safety_stock: safetyStockValue })
-                    .in('id', Array.from(selectedPublications));
-
-                if (error) throw error;
-
-                // Actualizar estado local solo para las seleccionadas
-                const updatedIds = Array.from(selectedPublications);
-                setPublications(pubs => pubs.map(p => 
-                    updatedIds.includes(p.id) ? { ...p, safety_stock: safetyStockValue } : p
-                ));
+                // Actualización solo para las publicaciones seleccionadas con sincronización inmediata
+                const selectedIds = Array.from(selectedPublications);
+                const selectedPubs = publications.filter(p => selectedIds.includes(p.id));
+                
+                // Procesar cada publicación individualmente para sincronización inmediata
+                for (const pub of selectedPubs) {
+                    await handleSafetyStockChange(pub.id, safetyStockValue, false); // false = no mostrar mensaje individual
+                }
             }
 
             setSelectedPublications(new Set());
             setSelectAllAcrossPages(false);
             setBulkSafetyStock('');
-            showMessage(`Stock de seguridad actualizado para ${totalToUpdate} publicaciones`, 'success');
+            showMessage(`Stock de seguridad actualizado y sincronizado para ${totalToUpdate} publicaciones`, 'success');
         } catch (error) {
             showMessage(`Error en actualización masiva: ${error.message}`, 'error');
         } finally {
@@ -264,28 +262,89 @@ const PublicationsView = () => {
         }
     };
     
-    // Nueva función para manejar cambios de stock de seguridad
-    const handleSafetyStockChange = async (publicationId, newSafetyStock) => {
-        // Encontrar la publicación actual para tener el valor original
+    // Función modificada para sincronización inmediata del stock de seguridad
+    const handleSafetyStockChange = async (publicationId, newSafetyStock, showMessageFlag = true) => {
         const currentPub = publications.find(p => p.id === publicationId);
+        if (!currentPub) return;
         
-        // Actualizar optimistamente en la UI
+        // Marcar item como sincronizando
+        setSyncingItems(prev => new Set([...prev, publicationId]));
+        
+        // Actualizar optimisticamente en la UI
         setPublications(pubs => pubs.map(p => 
             p.id === publicationId ? { ...p, safety_stock: newSafetyStock } : p
         ));
         
-        // Actualizar en la base de datos
-        const { error } = await supabase
-            .from('mercadolibre_listings')
-            .update({ safety_stock: newSafetyStock })
-            .eq('id', publicationId);
-        
-        if (error) {
-            showMessage(`Error al actualizar stock de seguridad: ${error.message}`, 'error');
+        try {
+            // 1. Actualizar en la base de datos
+            const { error: updateError } = await supabase
+                .from('mercadolibre_listings')
+                .update({ safety_stock: newSafetyStock })
+                .eq('id', publicationId);
+            
+            if (updateError) throw updateError;
+
+            // 2. Obtener el stock físico actual del sync_cache
+            const { data: syncData } = await supabase
+                .from('sync_cache')
+                .select('calculated_stock')
+                .eq('sku', currentPub.sku)
+                .single();
+
+            if (syncData) {
+                // 3. Calcular nuevo stock vendible (físico - seguridad)
+                let newAvailableStock = Math.max(0, syncData.calculated_stock - newSafetyStock);
+                
+                // 4. Para kits, aplicar la división correspondiente
+                if (currentPub.sku && currentPub.sku.includes('/X')) {
+                    const multiplierMatch = currentPub.sku.match(/\/X(\d+)/);
+                    if (multiplierMatch) {
+                        const multiplier = parseInt(multiplierMatch[1]);
+                        newAvailableStock = Math.floor(newAvailableStock / multiplier);
+                    }
+                }
+                
+                // 5. Sincronizar directamente con MercadoLibre
+                const { error: syncError } = await supabase.functions.invoke('mercadolibre-update-single-item', {
+                    body: {
+                        meliId: currentPub.meli_id,
+                        variationId: currentPub.meli_variation_id,
+                        availableQuantity: newAvailableStock,
+                        sku: currentPub.sku
+                    }
+                });
+                
+                if (syncError) throw syncError;
+                
+                // 6. Actualizar UI con el stock sincronizado
+                setPublications(pubs => pubs.map(p => 
+                    p.id === publicationId ? { 
+                        ...p, 
+                        safety_stock: newSafetyStock,
+                        available_quantity: newAvailableStock 
+                    } : p
+                ));
+                
+                if (showMessageFlag) {
+                    showMessage(`Stock de seguridad actualizado a ${newSafetyStock}. Stock disponible en ML: ${newAvailableStock}`, 'success');
+                }
+            }
+            
+        } catch (error) {
+            if (showMessageFlag) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
             // Revertir cambio en caso de error
             setPublications(pubs => pubs.map(p => 
                 p.id === publicationId ? { ...p, safety_stock: currentPub?.safety_stock || 0 } : p
             ));
+        } finally {
+            // Remover del estado de sincronización
+            setSyncingItems(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(publicationId);
+                return newSet;
+            });
         }
     };
     
@@ -382,7 +441,7 @@ const PublicationsView = () => {
                         {/* Stock de seguridad masivo */}
                         <div>
                             <label className="block text-sm text-gray-300 mb-2 font-medium">
-                                Stock de Seguridad Masivo
+                                Stock de Seguridad Masivo (Sincronización Inmediata)
                             </label>
                             <div className="flex gap-2">
                                 <input 
@@ -398,11 +457,11 @@ const PublicationsView = () => {
                                     disabled={isUpdatingBulk || !bulkSafetyStock}
                                     className="px-4 py-2 bg-orange-600 text-white text-sm font-semibold rounded hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {isUpdatingBulk ? 'Aplicando...' : 'Aplicar'}
+                                    {isUpdatingBulk ? 'Sincronizando...' : 'Aplicar y Sincronizar'}
                                 </button>
                             </div>
                             <p className="text-xs text-gray-400 mt-1">
-                                Se aplicará a las {selectAllAcrossPages ? count : selectedPublications.size} publicaciones {selectAllAcrossPages ? 'que coinciden con los filtros' : 'seleccionadas'}
+                                Se aplicará y sincronizará inmediatamente con ML para {selectAllAcrossPages ? count : selectedPublications.size} publicaciones
                             </p>
                         </div>
                         
@@ -463,17 +522,23 @@ const PublicationsView = () => {
                                     <p className="text-sm text-gray-400">Disponible: <span className="font-semibold text-green-400">{pub.available_quantity}</span></p>
                                     <p className="text-sm text-gray-400">Reservado: <span className="font-semibold text-yellow-400">{pub.stock_reservado}</span></p>
                                     
-                                    {/* Stock de seguridad editable */}
+                                    {/* Stock de seguridad editable con sincronización inmediata */}
                                     <div className="text-sm text-gray-400 flex items-center justify-end mt-1">
                                         <span className="mr-2">Seguridad:</span>
-                                        <input 
-                                            type="number" 
-                                            min="0"
-                                            value={pub.safety_stock || 0}
-                                            onChange={(e) => handleSafetyStockChange(pub.id, parseInt(e.target.value) || 0)}
-                                            className="w-16 px-2 py-1 bg-gray-600 text-white text-xs rounded border border-gray-500 focus:border-blue-400 focus:outline-none"
-                                            title="Stock de seguridad - se resta del stock disponible antes de sincronizar"
-                                        />
+                                        <div className="relative">
+                                            <input 
+                                                type="number" 
+                                                min="0"
+                                                value={pub.safety_stock || 0}
+                                                onChange={(e) => handleSafetyStockChange(pub.id, parseInt(e.target.value) || 0)}
+                                                disabled={syncingItems.has(pub.id)}
+                                                className="w-16 px-2 py-1 bg-gray-600 text-white text-xs rounded border border-gray-500 focus:border-blue-400 focus:outline-none disabled:opacity-50"
+                                                title="Stock de seguridad - se resta del stock disponible y sincroniza inmediatamente con ML"
+                                            />
+                                            {syncingItems.has(pub.id) && (
+                                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="flex-shrink-0 pl-2">
