@@ -167,7 +167,7 @@ serve(async (req) => {
         }
 
         // Construir el payload de actualización
-        const payload: { available_quantity?: number; price?: number; variations?: any[] } = {};
+        const payload: { available_quantity?: number; price?: number; status?: string; variations?: any[] } = {};
         
         if (availableQuantity !== undefined) {
             payload.available_quantity = availableQuantity;
@@ -175,6 +175,10 @@ serve(async (req) => {
         
         if (price !== undefined) {
             payload.price = price;
+        }
+        
+        if (status !== undefined) {
+            payload.status = status;
         }
         
         // Si tiene variation ID, usar formato de variaciones
