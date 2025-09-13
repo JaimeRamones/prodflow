@@ -7,6 +7,7 @@ import ImageZoomModal from './ImageZoomModal';
 import EditPublicationModal from './EditPublicationModal';
 
 const ITEMS_PER_PAGE = 50;
+const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutos para detectar nuevas publicaciones
 
 // --- Componentes de UI (Pills y Toggle) ---
 const StatusPill = ({ status }) => {
@@ -46,6 +47,30 @@ const ToggleSwitch = ({ checked, onChange }) => (
     </label>
 );
 
+// Nuevo componente: Indicador de nuevas publicaciones
+const NewPublicationsIndicator = ({ count, onRefresh }) => {
+    if (count === 0) return null;
+    
+    return (
+        <div className="mb-4 p-3 bg-green-900/50 border border-green-600 rounded-lg">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                    <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-green-200 font-semibold">
+                        {count} nueva{count > 1 ? 's' : ''} publicación{count > 1 ? 'es' : ''} detectada{count > 1 ? 's' : ''}
+                    </span>
+                </div>
+                <button 
+                    onClick={onRefresh}
+                    className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded hover:bg-green-700"
+                >
+                    Cargar nuevas publicaciones
+                </button>
+            </div>
+        </div>
+    );
+};
+
 const PublicationsView = () => {
     const { products, showMessage } = useContext(AppContext);
     const [publications, setPublications] = useState([]);
@@ -71,6 +96,11 @@ const PublicationsView = () => {
     // Estado para sincronización inmediata
     const [syncingItems, setSyncingItems] = useState(new Set());
 
+    // NUEVO: Estado para auto-detección de publicaciones
+    const [newPublicationsCount, setNewPublicationsCount] = useState(0);
+    const [lastKnownCount, setLastKnownCount] = useState(0);
+    const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+
     // Calcular información del SKU actual
     const currentSKUInfo = useMemo(() => {
         if (!searchTerm.trim()) return null;
@@ -89,43 +119,92 @@ const PublicationsView = () => {
         return null;
     }, [publications, searchTerm]);
 
-    useEffect(() => {
-        const fetchPublications = async () => {
-            setIsLoading(true);
-            const from = page * ITEMS_PER_PAGE;
-            const to = from + ITEMS_PER_PAGE - 1;
-
-            let query = supabase.from('mercadolibre_listings').select('*', { count: 'exact' });
-
-            if (searchTerm.trim()) {
-                query = query.or(`title.ilike.%${searchTerm.trim()}%,sku.ilike.%${searchTerm.trim()}%`);
-            }
-            if (statusFilter) query = query.eq('status', statusFilter);
-            if (typeFilter) query = query.eq('listing_type_id', typeFilter);
-            if (syncFilter !== '') query = query.eq('sync_enabled', syncFilter === 'true');
-
-            if (sortBy === 'sold_quantity') {
-                query = query.order('sold_quantity', { ascending: false, nullsFirst: false });
-            } else {
-                query = query.order('title', { ascending: true });
-            }
-
-            const { data, error, count: queryCount } = await query.range(from, to);
-            
-            if (error) {
-                console.error("Error fetching publications:", error);
-                setPublications([]);
-            } else {
-                const linkedData = data.map(pub => ({ ...pub, stock_reservado: products.find(p => p.sku === pub.sku)?.stock_reservado ?? 0 }));
-                setPublications(linkedData);
-                setCount(queryCount || 0);
-            }
-            setIsLoading(false);
-        };
+    // NUEVA FUNCIÓN: Detectar nuevas publicaciones automáticamente
+    const checkForNewPublications = async () => {
+        if (!autoRefreshEnabled) return;
         
+        try {
+            const { count: currentCount } = await supabase
+                .from('mercadolibre_listings')
+                .select('*', { count: 'exact', head: true });
+            
+            if (currentCount > lastKnownCount && lastKnownCount > 0) {
+                setNewPublicationsCount(currentCount - lastKnownCount);
+            }
+        } catch (error) {
+            console.error('Error checking for new publications:', error);
+        }
+    };
+
+    // NUEVA FUNCIÓN: Sincronizar nuevas publicaciones desde MercadoLibre
+    const syncNewPublications = async () => {
+        try {
+            setIsLoading(true);
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-listings');
+            if (error) throw error;
+            
+            showMessage(`Sincronización completada. ${data.count} publicaciones procesadas.`, 'success');
+            setNewPublicationsCount(0);
+            
+            // Refrescar la lista actual
+            await fetchPublications();
+        } catch (error) {
+            showMessage(`Error al sincronizar: ${error.message}`, 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const fetchPublications = async () => {
+        setIsLoading(true);
+        const from = page * ITEMS_PER_PAGE;
+        const to = from + ITEMS_PER_PAGE - 1;
+
+        let query = supabase.from('mercadolibre_listings').select('*', { count: 'exact' });
+
+        if (searchTerm.trim()) {
+            query = query.or(`title.ilike.%${searchTerm.trim()}%,sku.ilike.%${searchTerm.trim()}%`);
+        }
+        if (statusFilter) query = query.eq('status', statusFilter);
+        if (typeFilter) query = query.eq('listing_type_id', typeFilter);
+        if (syncFilter !== '') query = query.eq('sync_enabled', syncFilter === 'true');
+
+        if (sortBy === 'sold_quantity') {
+            query = query.order('sold_quantity', { ascending: false, nullsFirst: false });
+        } else {
+            query = query.order('title', { ascending: true });
+        }
+
+        const { data, error, count: queryCount } = await query.range(from, to);
+        
+        if (error) {
+            console.error("Error fetching publications:", error);
+            setPublications([]);
+        } else {
+            const linkedData = data.map(pub => ({ ...pub, stock_reservado: products.find(p => p.sku === pub.sku)?.stock_reservado ?? 0 }));
+            setPublications(linkedData);
+            setCount(queryCount || 0);
+            
+            // Actualizar el último count conocido
+            if (lastKnownCount === 0) {
+                setLastKnownCount(queryCount || 0);
+            }
+        }
+        setIsLoading(false);
+    };
+
+    useEffect(() => {
         const debounceTimeout = setTimeout(() => { fetchPublications(); }, 300);
         return () => clearTimeout(debounceTimeout);
     }, [page, products, searchTerm, statusFilter, typeFilter, sortBy, syncFilter]);
+
+    // NUEVO: Auto-refresh para detectar nuevas publicaciones
+    useEffect(() => {
+        if (!autoRefreshEnabled) return;
+        
+        const interval = setInterval(checkForNewPublications, AUTO_REFRESH_INTERVAL);
+        return () => clearInterval(interval);
+    }, [autoRefreshEnabled, lastKnownCount]);
 
     useEffect(() => {
         setPage(0);
@@ -150,7 +229,6 @@ const PublicationsView = () => {
         }
     };
 
-    // Nueva función: Seleccionar todas las publicaciones del SKU actual
     const handleSelectAllBySKU = () => {
         if (currentSKUInfo) {
             const skuPublicationIds = currentSKUInfo.publications.map(pub => pub.id);
@@ -159,7 +237,6 @@ const PublicationsView = () => {
         }
     };
 
-    // Nueva función: Actualización masiva de stock de seguridad
     const handleBulkSafetyStockUpdate = async () => {
         if (!bulkSafetyStock) {
             showMessage('Ingresa un valor para el stock de seguridad', 'error');
@@ -181,7 +258,6 @@ const PublicationsView = () => {
         setIsUpdatingBulk(true);
         try {
             if (selectAllAcrossPages) {
-                // Actualización masiva para todas las publicaciones que coinciden con los filtros
                 const { error } = await supabase.functions.invoke('mercadolibre-bulk-update-safety-stock-immediate', {
                     body: {
                         filters: { searchTerm, statusFilter, typeFilter, syncFilter },
@@ -190,16 +266,13 @@ const PublicationsView = () => {
                 });
                 if (error) throw error;
                 
-                // Actualizar todas las publicaciones visibles
                 setPublications(pubs => pubs.map(p => ({ ...p, safety_stock: safetyStockValue })));
             } else {
-                // Actualización solo para las publicaciones seleccionadas con sincronización inmediata
                 const selectedIds = Array.from(selectedPublications);
                 const selectedPubs = publications.filter(p => selectedIds.includes(p.id));
                 
-                // Procesar cada publicación individualmente para sincronización inmediata
                 for (const pub of selectedPubs) {
-                    await handleSafetyStockChange(pub.id, safetyStockValue, false); // false = no mostrar mensaje individual
+                    await handleSafetyStockChange(pub.id, safetyStockValue, false);
                 }
             }
 
@@ -262,21 +335,17 @@ const PublicationsView = () => {
         }
     };
     
-    // Función modificada para sincronización inmediata del stock de seguridad con activación/pausa automática
     const handleSafetyStockChange = async (publicationId, newSafetyStock, showMessageFlag = true) => {
         const currentPub = publications.find(p => p.id === publicationId);
         if (!currentPub) return;
         
-        // Marcar item como sincronizando
         setSyncingItems(prev => new Set([...prev, publicationId]));
         
-        // Actualizar optimistamente en la UI
         setPublications(pubs => pubs.map(p => 
             p.id === publicationId ? { ...p, safety_stock: newSafetyStock } : p
         ));
         
         try {
-            // 1. Actualizar en la base de datos
             const { error: updateError } = await supabase
                 .from('mercadolibre_listings')
                 .update({ safety_stock: newSafetyStock })
@@ -284,7 +353,6 @@ const PublicationsView = () => {
             
             if (updateError) throw updateError;
 
-            // 2. Obtener el stock físico actual del sync_cache
             const { data: syncData } = await supabase
                 .from('sync_cache')
                 .select('calculated_stock')
@@ -292,10 +360,8 @@ const PublicationsView = () => {
                 .single();
 
             if (syncData) {
-                // 3. Calcular nuevo stock vendible (físico - seguridad)
                 let newAvailableStock = Math.max(0, syncData.calculated_stock - newSafetyStock);
                 
-                // 4. Para kits, aplicar la división correspondiente
                 if (currentPub.sku && currentPub.sku.includes('/X')) {
                     const multiplierMatch = currentPub.sku.match(/\/X(\d+)/);
                     if (multiplierMatch) {
@@ -304,7 +370,6 @@ const PublicationsView = () => {
                     }
                 }
                 
-                // 5. Determinar si debe estar activa o pausada
                 const shouldBeActive = newAvailableStock > 0;
                 const currentlyActive = currentPub.status === 'active';
                 let newStatus = currentPub.status;
@@ -313,7 +378,6 @@ const PublicationsView = () => {
                     newStatus = shouldBeActive ? 'active' : 'paused';
                 }
                 
-                // 6. Sincronizar con MercadoLibre (stock + estado si cambió)
                 const syncPayload = {
                     meliId: currentPub.meli_id,
                     variationId: currentPub.meli_variation_id,
@@ -331,7 +395,6 @@ const PublicationsView = () => {
                 
                 if (syncError) throw syncError;
                 
-                // 7. Actualizar UI con el stock y estado sincronizados
                 setPublications(pubs => pubs.map(p => 
                     p.id === publicationId ? { 
                         ...p, 
@@ -351,12 +414,10 @@ const PublicationsView = () => {
             if (showMessageFlag) {
                 showMessage(`Error: ${error.message}`, 'error');
             }
-            // Revertir cambio en caso de error
             setPublications(pubs => pubs.map(p => 
                 p.id === publicationId ? { ...p, safety_stock: currentPub?.safety_stock || 0 } : p
             ));
         } finally {
-            // Remover del estado de sincronización
             setSyncingItems(prev => {
                 const newSet = new Set(prev);
                 newSet.delete(publicationId);
@@ -369,7 +430,6 @@ const PublicationsView = () => {
         if (!editingPublication) return;
         setIsSaving(true);
         try {
-            // Preparar payload de actualización
             const updates = {};
             
             if (newPrice !== undefined && newPrice !== editingPublication.price) {
@@ -380,12 +440,10 @@ const PublicationsView = () => {
                 updates.sku = newSku;
             }
             
-            // Si se cambió el stock, actualizarlo directamente
             if (newStock !== undefined && newStock !== editingPublication.available_quantity) {
                 updates.availableQuantity = newStock;
             }
             
-            // Solo sincronizar si hay cambios
             if (Object.keys(updates).length > 0) {
                 const { error } = await supabase.functions.invoke('mercadolibre-update-single-item', {
                     body: {
@@ -397,7 +455,6 @@ const PublicationsView = () => {
                 
                 if (error) throw error;
                 
-                // Actualizar estado local
                 setPublications(pubs => pubs.map(p => 
                     p.id === editingPublication.id ? { 
                         ...p, 
@@ -425,11 +482,42 @@ const PublicationsView = () => {
 
     return (
         <div>
-            <h2 className="text-3xl font-bold text-white mb-6">Publicaciones de Mercado Libre</h2>
+            <div className="flex justify-between items-center mb-6">
+                <h2 className="text-3xl font-bold text-white">Publicaciones de Mercado Libre</h2>
+                
+                {/* NUEVO: Control de auto-refresh */}
+                <div className="flex items-center space-x-3">
+                    <label className="flex items-center space-x-2 text-sm text-gray-300">
+                        <input 
+                            type="checkbox" 
+                            checked={autoRefreshEnabled}
+                            onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+                            className="w-4 h-4 bg-gray-700 border-gray-600 rounded"
+                        />
+                        <span>Auto-detectar nuevas publicaciones</span>
+                    </label>
+                    <button 
+                        onClick={syncNewPublications}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                        title="Sincronizar manualmente con MercadoLibre"
+                    >
+                        Refrescar
+                    </button>
+                </div>
+            </div>
+
+            {/* NUEVO: Indicador de nuevas publicaciones */}
+            <NewPublicationsIndicator 
+                count={newPublicationsCount} 
+                onRefresh={() => {
+                    syncNewPublications();
+                    setLastKnownCount(count + newPublicationsCount);
+                }}
+            />
+            
             <div className="mb-6 p-4 bg-gray-900/50 rounded-lg space-y-4">
                 <input type="text" placeholder="Buscar por ID de ML, título o SKU..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white" />
                 
-                {/* Mostrar información del SKU si está buscando */}
                 {currentSKUInfo && (
                     <div className="p-3 bg-blue-900/30 border border-blue-600 rounded-lg">
                         <div className="flex items-center justify-between">
@@ -474,7 +562,6 @@ const PublicationsView = () => {
                 </div>
             </div>
             
-            {/* Panel de acciones masivas mejorado */}
             {selectedPublications.size > 0 && (
                 <div className="mb-4 p-4 bg-blue-900/50 border border-blue-700 rounded-lg space-y-4">
                     <div className="flex items-center justify-between">
@@ -490,9 +577,7 @@ const PublicationsView = () => {
                         </div>
                     </div>
                     
-                    {/* Sección de edición masiva */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3 border-t border-blue-600">
-                        {/* Stock de seguridad masivo */}
                         <div>
                             <label className="block text-sm text-gray-300 mb-2 font-medium">
                                 Stock de Seguridad Masivo (Sincronización Inmediata)
@@ -519,7 +604,6 @@ const PublicationsView = () => {
                             </p>
                         </div>
                         
-                        {/* Acciones de sincronización */}
                         <div>
                             <label className="block text-sm text-gray-300 mb-2 font-medium">
                                 Sincronización Masiva
@@ -534,7 +618,6 @@ const PublicationsView = () => {
                             </div>
                         </div>
                         
-                        {/* Información adicional */}
                         <div className="flex items-end">
                             <div className="text-sm text-gray-300">
                                 <p>Publicaciones seleccionadas: <span className="font-semibold text-white">{selectAllAcrossPages ? count : selectedPublications.size}</span></p>
@@ -576,7 +659,6 @@ const PublicationsView = () => {
                                     <p className="text-sm text-gray-400">Disponible: <span className="font-semibold text-green-400">{pub.available_quantity}</span></p>
                                     <p className="text-sm text-gray-400">Reservado: <span className="font-semibold text-yellow-400">{pub.stock_reservado}</span></p>
                                     
-                                    {/* Stock de seguridad editable con sincronización inmediata */}
                                     <div className="text-sm text-gray-400 flex items-center justify-end mt-1">
                                         <span className="mr-2">Seguridad:</span>
                                         <div className="relative">
