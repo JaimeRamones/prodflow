@@ -17,9 +17,8 @@ const ExcelImportExport = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const fileInputRef = useRef(null);
 
-    const BATCH_SIZE = 50; // Procesar en lotes de 50 productos
+    const BATCH_SIZE = 50;
 
-    // Función para leer archivo Excel
     const readExcelFile = (file) => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -40,15 +39,11 @@ const ExcelImportExport = () => {
         });
     };
 
-    // Función para exportar a Excel
     const handleExport = async () => {
         setIsExporting(true);
         try {
-            // Preparar datos para exportación
             const exportData = [
-                // Headers
                 ['SKU', 'Nombre', 'Marca', 'Proveedor_ID', 'Rubro', 'Subrubro', 'Stock_Total', 'Costo', 'Precio_Venta'],
-                // Datos de productos
                 ...products.map(product => [
                     product.sku || '',
                     product.name || '',
@@ -62,30 +57,20 @@ const ExcelImportExport = () => {
                 ])
             ];
 
-            // Crear workbook
             const wb = window.XLSX.utils.book_new();
             const ws = window.XLSX.utils.aoa_to_sheet(exportData);
             
-            // Configurar anchos de columnas
             ws['!cols'] = [
-                { wch: 15 }, // SKU
-                { wch: 30 }, // Nombre
-                { wch: 15 }, // Marca
-                { wch: 12 }, // Proveedor_ID
-                { wch: 15 }, // Rubro
-                { wch: 20 }, // Subrubro
-                { wch: 12 }, // Stock_Total
-                { wch: 12 }, // Costo
-                { wch: 12 }, // Precio_Venta
+                { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 12 }, 
+                { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }
             ];
 
             window.XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
             
-            // Descargar archivo
             const fileName = `Inventario_${new Date().toISOString().split('T')[0]}.xlsx`;
             window.XLSX.writeFile(wb, fileName);
             
-            showMessage(`Inventario exportado exitosamente: ${fileName}`, 'success');
+            showMessage(`Inventario exportado: ${fileName}`, 'success');
         } catch (error) {
             showMessage(`Error al exportar: ${error.message}`, 'error');
         } finally {
@@ -93,32 +78,26 @@ const ExcelImportExport = () => {
         }
     };
 
-    // Función para crear plantilla de Excel
     const handleExportTemplate = () => {
         try {
             const templateData = [
-                // Headers con descripciones
                 ['SKU', 'Nombre', 'Marca', 'Proveedor_ID', 'Rubro', 'Subrubro', 'Stock_Total'],
                 ['Obligatorio', 'Obligatorio', 'Opcional', 'ID del proveedor', 'Opcional', 'Opcional', 'Número entero'],
                 ['NOTA:', 'El costo se obtiene automáticamente de supplier_stock_items', '', '', '', '', ''],
-                // Ejemplos
                 ['AIMET M 68', 'Bomba De Aceite Chevrolet Zafira 2.0 16v', 'AIMET', '1', 'Autopartes', 'Motor', '10'],
-                ['R 636193 NBC', 'Kit 2 Ruleman Rueda Delantera Hyundai Atos', 'R', '2', 'Autopartes', 'Suspensión', '5'],
+                ['R 636193 NBC', 'Kit 2 Ruleman Rueda Delantera Hyundai Atos', 'R', '2', 'Autopartes', 'Suspensión', '5']
             ];
 
-            // Crear hoja de proveedores disponibles
             const suppliersData = [
                 ['ID_Proveedor', 'Nombre_Proveedor'],
                 ...suppliers.map(supplier => [supplier.id, supplier.name])
             ];
 
-            // Crear hoja de marcas disponibles
             const brandsData = [
                 ['Marcas_Disponibles'],
                 ...masterData.brands.map(brand => [brand])
             ];
 
-            // Crear hoja de rubros disponibles
             const rubrosData = [
                 ['Rubro', 'Subrubros'],
                 ...Object.entries(masterData.categories).flatMap(([rubro, subrubros]) => 
@@ -130,7 +109,6 @@ const ExcelImportExport = () => {
 
             const wb = window.XLSX.utils.book_new();
             
-            // Hoja principal
             const ws1 = window.XLSX.utils.aoa_to_sheet(templateData);
             ws1['!cols'] = [
                 { wch: 15 }, { wch: 40 }, { wch: 15 }, { wch: 12 }, 
@@ -138,29 +116,25 @@ const ExcelImportExport = () => {
             ];
             window.XLSX.utils.book_append_sheet(wb, ws1, 'Plantilla_Productos');
 
-            // Hoja de proveedores
             const ws2 = window.XLSX.utils.aoa_to_sheet(suppliersData);
             ws2['!cols'] = [{ wch: 15 }, { wch: 30 }];
             window.XLSX.utils.book_append_sheet(wb, ws2, 'Proveedores');
 
-            // Hoja de marcas
             const ws3 = window.XLSX.utils.aoa_to_sheet(brandsData);
             ws3['!cols'] = [{ wch: 20 }];
             window.XLSX.utils.book_append_sheet(wb, ws3, 'Marcas');
 
-            // Hoja de rubros
             const ws4 = window.XLSX.utils.aoa_to_sheet(rubrosData);
             ws4['!cols'] = [{ wch: 20 }, { wch: 25 }];
             window.XLSX.utils.book_append_sheet(wb, ws4, 'Rubros_y_Subrubros');
 
             window.XLSX.writeFile(wb, 'Plantilla_Importacion_Inventario.xlsx');
-            showMessage('Plantilla descargada exitosamente. Completa los datos y súbela para importar.', 'success');
+            showMessage('Plantilla descargada exitosamente.', 'success');
         } catch (error) {
             showMessage(`Error al crear plantilla: ${error.message}`, 'error');
         }
     };
 
-    // Función para validar datos
     const validateRowData = (row, index) => {
         const errors = [];
         const [sku, name, brand, supplierId, rubro, subrubro, stockTotal] = row;
@@ -168,27 +142,21 @@ const ExcelImportExport = () => {
         if (!sku || sku.toString().trim() === '') {
             errors.push(`Fila ${index + 1}: SKU es obligatorio`);
         }
-
         if (!name || name.toString().trim() === '') {
             errors.push(`Fila ${index + 1}: Nombre es obligatorio`);
         }
-
         if (supplierId && !suppliers.find(s => s.id.toString() === supplierId.toString())) {
             errors.push(`Fila ${index + 1}: Proveedor ID ${supplierId} no existe`);
         }
-
         if (brand && !masterData.brands.includes(brand)) {
             errors.push(`Fila ${index + 1}: Marca "${brand}" no está en el catálogo`);
         }
-
         if (rubro && !masterData.categories[rubro]) {
             errors.push(`Fila ${index + 1}: Rubro "${rubro}" no existe`);
         }
-
         if (rubro && subrubro && masterData.categories[rubro] && !masterData.categories[rubro].includes(subrubro)) {
             errors.push(`Fila ${index + 1}: Subrubro "${subrubro}" no existe en rubro "${rubro}"`);
         }
-
         if (stockTotal && (isNaN(stockTotal) || parseInt(stockTotal) < 0)) {
             errors.push(`Fila ${index + 1}: Stock debe ser un número entero positivo`);
         }
@@ -196,7 +164,6 @@ const ExcelImportExport = () => {
         return errors;
     };
 
-    // Función para procesar archivo cargado
     const handleFileUpload = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
@@ -209,7 +176,6 @@ const ExcelImportExport = () => {
                 throw new Error('El archivo debe tener al menos una fila de encabezados y una fila de datos');
             }
 
-            // Saltar la primera fila (headers) y procesar datos
             const dataRows = rawData.slice(1).filter(row => 
                 row.some(cell => cell !== undefined && cell !== null && cell.toString().trim() !== '')
             );
@@ -218,7 +184,6 @@ const ExcelImportExport = () => {
                 throw new Error('No se encontraron datos válidos en el archivo');
             }
 
-            // Validar todos los datos
             let allErrors = [];
             const processedData = dataRows.map((row, index) => {
                 const errors = validateRowData(row, index);
@@ -234,7 +199,7 @@ const ExcelImportExport = () => {
                     rubro: rubro ? rubro.toString().trim() : '',
                     subrubro: subrubro ? subrubro.toString().trim() : '',
                     stock_total: stockTotal ? parseInt(stockTotal) : 0,
-                    rowNumber: index + 2, // +2 porque empezamos desde la fila 2 del Excel
+                    rowNumber: index + 2,
                     errors: errors
                 };
             });
@@ -253,13 +218,11 @@ const ExcelImportExport = () => {
         }
     };
 
-    // Función para procesar en lotes con progreso
     const processBatch = async (batch, supplierStockData, batchIndex, totalBatches) => {
         const batchResults = { newProducts: 0, updatedProducts: 0, errors: 0 };
 
         for (const item of batch) {
             try {
-                // Buscar costo en supplier_stock_items
                 let costPrice = 0;
                 if (supplierStockData) {
                     const supplierStock = supplierStockData.find(s => s.sku === item.sku);
@@ -268,13 +231,11 @@ const ExcelImportExport = () => {
                     }
                 }
 
-                // Verificar si el producto ya existe
                 const existingProduct = products.find(p => 
                     p.sku.toLowerCase() === item.sku.toLowerCase()
                 );
 
                 if (existingProduct) {
-                    // Actualizar producto existente
                     const updateData = {
                         name: item.name || existingProduct.name,
                         brand: item.brand || existingProduct.brand,
@@ -286,7 +247,6 @@ const ExcelImportExport = () => {
                         cost_price: costPrice > 0 ? costPrice : existingProduct.cost_price
                     };
 
-                    // Calcular precio de venta si hay proveedor y costo
                     if (updateData.supplier_id && updateData.cost_price > 0) {
                         const supplier = suppliers.find(s => s.id === updateData.supplier_id);
                         if (supplier && supplier.markup) {
@@ -303,7 +263,6 @@ const ExcelImportExport = () => {
                     if (error) throw error;
                     batchResults.updatedProducts++;
                 } else {
-                    // Crear nuevo producto
                     const newProductData = {
                         sku: item.sku,
                         name: item.name,
@@ -318,7 +277,6 @@ const ExcelImportExport = () => {
                         sale_price: 0
                     };
 
-                    // Calcular precio de venta si hay proveedor y costo
                     if (newProductData.supplier_id && newProductData.cost_price > 0) {
                         const supplier = suppliers.find(s => s.id === newProductData.supplier_id);
                         if (supplier && supplier.markup) {
@@ -340,7 +298,6 @@ const ExcelImportExport = () => {
             }
         }
 
-        // Actualizar progreso
         const current = (batchIndex + 1) * BATCH_SIZE;
         const percentage = Math.round((current / (totalBatches * BATCH_SIZE)) * 100);
         setImportProgress({ 
@@ -352,7 +309,6 @@ const ExcelImportExport = () => {
         return batchResults;
     };
 
-    // Función para confirmar importación con procesamiento por lotes
     const handleConfirmImport = async () => {
         setIsImporting(true);
         setIsProcessing(true);
@@ -365,7 +321,6 @@ const ExcelImportExport = () => {
                 throw new Error('No hay datos válidos para importar');
             }
 
-            // Cargar datos de supplier_stock_items para obtener costos
             showMessage('Cargando costos de proveedores...', 'info');
             const { data: supplierStockData, error: stockError } = await supabase
                 .from('supplier_stock_items')
@@ -375,13 +330,11 @@ const ExcelImportExport = () => {
                 console.error('Error cargando supplier_stock_items:', stockError);
             }
 
-            // Dividir en lotes
             const batches = [];
             for (let i = 0; i < validData.length; i += BATCH_SIZE) {
                 batches.push(validData.slice(i, i + BATCH_SIZE));
             }
 
-            // Inicializar progreso
             setImportProgress({ 
                 current: 0, 
                 total: validData.length, 
@@ -392,19 +345,16 @@ const ExcelImportExport = () => {
 
             showMessage(`Procesando ${validData.length} productos en ${batches.length} lotes...`, 'info');
 
-            // Procesar cada lote secuencialmente
             for (let i = 0; i < batches.length; i++) {
                 const batch = batches[i];
                 
                 try {
                     const batchResults = await processBatch(batch, supplierStockData, i, batches.length);
                     
-                    // Acumular resultados
                     totalResults.newProducts += batchResults.newProducts;
                     totalResults.updatedProducts += batchResults.updatedProducts;
                     totalResults.errors += batchResults.errors;
 
-                    // Pequeña pausa entre lotes para no sobrecargar la base de datos
                     if (i < batches.length - 1) {
                         await new Promise(resolve => setTimeout(resolve, 100));
                     }
@@ -420,14 +370,12 @@ const ExcelImportExport = () => {
                 total: validData.length 
             });
             
-            // Actualizar la lista de productos
             showMessage('Actualizando inventario...', 'info');
             await fetchProducts();
             
-            const message = `Importación completada: ${totalResults.newProducts} productos nuevos, ${totalResults.updatedProducts} actualizados, ${totalResults.errors} errores. Costos obtenidos automáticamente de supplier_stock_items.`;
+            const message = `Importación completada: ${totalResults.newProducts} productos nuevos, ${totalResults.updatedProducts} actualizados, ${totalResults.errors} errores.`;
             showMessage(message, totalResults.errors > 0 ? 'warning' : 'success');
 
-            // Limpiar
             setShowPreview(false);
             setPreviewData([]);
             if (fileInputRef.current) {
@@ -448,7 +396,6 @@ const ExcelImportExport = () => {
             <div className="bg-gray-800 rounded-lg p-6">
                 <h2 className="text-2xl font-bold text-white mb-6">Importación y Exportación de Inventario</h2>
                 
-                {/* Sección de Exportación */}
                 <div className="mb-8">
                     <h3 className="text-lg font-semibold text-white mb-4">Exportar Inventario</h3>
                     <div className="flex flex-wrap gap-4">
@@ -484,7 +431,6 @@ const ExcelImportExport = () => {
                     </div>
                 </div>
 
-                {/* Sección de Importación */}
                 <div>
                     <h3 className="text-lg font-semibold text-white mb-4">Importar desde Excel</h3>
                     <div className="border-2 border-dashed border-gray-600 rounded-lg p-6">
@@ -515,7 +461,6 @@ const ExcelImportExport = () => {
                     </div>
                 </div>
 
-                {/* Estadísticas de importación */}
                 {importStats && (
                     <div className="mt-6 p-4 bg-gray-700 rounded-lg">
                         <h4 className="text-white font-semibold mb-2">Última Importación:</h4>
@@ -541,7 +486,6 @@ const ExcelImportExport = () => {
                 )}
             </div>
 
-            {/* Modal de Vista Previa */}
             {showPreview && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
                     <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col">
@@ -570,6 +514,10 @@ const ExcelImportExport = () => {
                                     <tbody>
                                         {previewData.map((item, index) => (
                                             <tr key={index} className={`${item.errors.length > 0 ? 'bg-red-900/20' : 'bg-gray-800'} border-b border-gray-700`}>
+                                                <td className="px-4 py-2">{item.rowNumber}</td>
+                                                <td className="px-4 py-2 font-mono">{item.sku}</td>
+                                                <td className="px-4 py-2">{item.name}</td>
+                                                <td className="px-4 py-2">{item.brand}</td>
                                                 <td className="px-4 py-2">{item.stock_total}</td>
                                                 <td className="px-4 py-2">
                                                     {item.errors.length === 0 ? (
@@ -620,7 +568,6 @@ const ExcelImportExport = () => {
                             </button>
                         </div>
 
-                        {/* Barra de progreso durante importación */}
                         {isProcessing && (
                             <div className="p-6 border-t border-gray-700 bg-gray-900">
                                 <div className="mb-4">
@@ -659,8 +606,4 @@ const ExcelImportExport = () => {
     );
 };
 
-export default ExcelImportExport;-2">{item.rowNumber}</td>
-                                                <td className="px-4 py-2 font-mono">{item.sku}</td>
-                                                <td className="px-4 py-2">{item.name}</td>
-                                                <td className="px-4 py-2">{item.brand}</td>
-                                                <td className="px-4 py
+export default ExcelImportExport;
