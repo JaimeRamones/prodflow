@@ -1,11 +1,13 @@
 import React, { useState, useContext, useMemo } from 'react';
 import { AppContext } from '../App';
+import ExcelImportExport from './ExcelImportExport';
 
 // --- CAMBIO 1: Añadimos el prop `onPublish` ---
 const InventoryList = ({ onEdit, onDelete, onPublish }) => {
     const { products } = useContext(AppContext);
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
+    const [showImportExportModal, setShowImportExportModal] = useState(false);
     const productsPerPage = 15;
 
     const filteredProducts = useMemo(() => {
@@ -34,17 +36,31 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
         <div>
             <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
                 <h2 className="text-3xl font-bold text-white">Inventario</h2>
-                <div className="relative w-full sm:w-auto">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                <div className="flex items-center gap-4">
+                    {/* Botón de Importar/Exportar */}
+                    <button
+                        onClick={() => setShowImportExportModal(true)}
+                        className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg shadow-md hover:bg-purple-700 transition-colors flex items-center gap-2"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 12l3 3m0 0l3-3m-3 3V9"></path>
+                        </svg>
+                        Importar/Exportar
+                    </button>
+                    
+                    {/* Barra de búsqueda */}
+                    <div className="relative w-full sm:w-auto">
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Buscar por SKU, Nombre, Marca..."
+                            value={searchTerm}
+                            onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                            className="block w-full p-2.5 pl-10 text-sm border rounded-lg bg-gray-700 border-gray-600 placeholder-gray-400 text-white focus:ring-blue-500 focus:border-blue-500"
+                        />
                     </div>
-                    <input
-                        type="text"
-                        placeholder="Buscar por SKU, Nombre, Marca..."
-                        value={searchTerm}
-                        onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-                        className="block w-full p-2.5 pl-10 text-sm border rounded-lg bg-gray-700 border-gray-600 placeholder-gray-400 text-white focus:ring-blue-500 focus:border-blue-500"
-                    />
                 </div>
             </div>
 
@@ -114,6 +130,28 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                     </li>
                 </ul>
             </nav>
+
+            {/* Modal de Importar/Exportar */}
+            {showImportExportModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
+                    <div className="bg-gray-900 rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-gray-900 border-b border-gray-700 p-4 flex justify-between items-center">
+                            <h3 className="text-xl font-bold text-white">Importar/Exportar Inventario</h3>
+                            <button
+                                onClick={() => setShowImportExportModal(false)}
+                                className="text-gray-400 hover:text-white"
+                            >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            <ExcelImportExport />
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
