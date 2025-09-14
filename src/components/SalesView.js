@@ -610,22 +610,25 @@ const SalesView = () => {
                             </div>
                             
                             {/* Items de la orden */}
-                            <div className="p-4">
-                                {order.order_items.map((item, index) => (
-                                    <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 mb-2">
-                                        <div className="flex-shrink-0">
-                                            {item.images && item.images[0] && (
-                                                <img 
-                                                    src={item.images[0]} 
-                                                    alt={item.title} 
-                                                    className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
-                                                    onClick={() => setZoomedImageUrl(item.images[0])}
-                                                    onError={(e) => {
-                                                        e.target.src = 'https://via.placeholder.com/150?text=Sin+Imagen';
-                                                    }}
-                                                />
-                                            )}
-                                        </div>
+                           <div className="flex-shrink-0">
+    {item.images && item.images.length > 0 && item.images[0] ? (
+        <img 
+            src={item.images[0]} 
+            alt={item.title} 
+            className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
+            onClick={() => setZoomedImageUrl(item.images[0])}
+            onError={(e) => {
+                e.target.style.display = 'none';
+            }}
+        />
+    ) : (
+        <div className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center">
+            <svg className="w-8 h-8 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+            </svg>
+        </div>
+    )}
+</div>
                                         <div className="flex-grow">
                                             <p className="font-semibold text-white leading-tight">
                                                 {item.title}
@@ -736,5 +739,5 @@ const SalesView = () => {
         </div>
     );
 };
-//aaa
+
 export default SalesView;
