@@ -498,7 +498,6 @@ const ExcelImportExport = () => {
                                                 <td className="px-4 py-2">{item.name}</td>
                                                 <td className="px-4 py-2">{item.brand}</td>
                                                 <td className="px-4 py-2">{item.stock_total}</td>
-                                                <td className="px-4 py-2">${item.cost_price}</td>
                                                 <td className="px-4 py-2">
                                                     {item.errors.length === 0 ? (
                                                         <span className="text-green-400">✓ Válido</span>
@@ -527,25 +526,59 @@ const ExcelImportExport = () => {
                                     setShowPreview(false);
                                     setPreviewData([]);
                                 }}
-                                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                                disabled={isProcessing}
+                                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
                             >
                                 Cancelar
                             </button>
                             <button
                                 onClick={handleConfirmImport}
-                                disabled={isImporting || previewData.filter(item => item.errors.length === 0).length === 0}
+                                disabled={isImporting || isProcessing || previewData.filter(item => item.errors.length === 0).length === 0}
                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
                             >
-                                {isImporting ? (
+                                {isProcessing ? (
                                     <>
                                         <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                                        Importando...
+                                        Procesando...
                                     </>
                                 ) : (
                                     `Confirmar Importación (${previewData.filter(item => item.errors.length === 0).length} productos)`
                                 )}
                             </button>
                         </div>
+
+                        {/* Barra de progreso durante importación */}
+                        {isProcessing && (
+                            <div className="p-6 border-t border-gray-700 bg-gray-900">
+                                <div className="mb-4">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="text-sm font-medium text-gray-300">
+                                            Progreso de importación
+                                        </span>
+                                        <span className="text-sm text-gray-400">
+                                            {importProgress.current} / {importProgress.total} productos
+                                        </span>
+                                    </div>
+                                    <div className="w-full bg-gray-700 rounded-full h-3">
+                                        <div 
+                                            className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+                                            style={{ width: `${importProgress.percentage}%` }}
+                                        ></div>
+                                    </div>
+                                    <div className="text-center mt-2">
+                                        <span className="text-lg font-bold text-blue-400">
+                                            {importProgress.percentage}%
+                                        </span>
+                                    </div>
+                                </div>
+                                
+                                <div className="text-xs text-gray-400 text-center">
+                                    Procesando en lotes de {BATCH_SIZE} productos para optimizar rendimiento...
+                                    <br />
+                                    No cierres esta ventana hasta que termine el proceso.
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
