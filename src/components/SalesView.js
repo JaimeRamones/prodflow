@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN COMPLETA CORREGIDA: Costos desde supplier_stock_items + Imágenes sin errores + Estética mejorada
+// VERSIÓN COMPLETA CORREGIDA: Costos desde sync_cache + Imágenes sin errores + Estética mejorada
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -44,20 +44,20 @@ const SalesView = () => {
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
 
-    // Cargar datos de supplier_stock_items para obtener costos
+    // Cargar datos de sync_cache para obtener costos calculados de kits
     useEffect(() => {
-        const fetchSupplierStockItems = async () => {
+        const fetchSyncCacheItems = async () => {
             try {
-                console.log('DEBUG - Iniciando carga de supplier_stock_items...');
+                console.log('DEBUG - Iniciando carga de sync_cache...');
                 const { data, error } = await supabase
                     .from('sync_cache')
                     .select('sku, calculated_price');
                 
                 if (error) {
-                    console.error('DEBUG - Error al cargar supplier_stock_items:', error);
+                    console.error('DEBUG - Error al cargar sync_cache:', error);
                     throw error;
                 }
-                console.log('DEBUG - Datos de supplier_stock_items cargados:', data);
+                console.log('DEBUG - Datos de sync_cache cargados:', data);
                 console.log('DEBUG - Cantidad de items:', data?.length || 0);
                 
                 // Mostrar algunos ejemplos de SKUs
@@ -65,13 +65,13 @@ const SalesView = () => {
                     console.log('DEBUG - Primeros 5 SKUs encontrados:', data.slice(0, 5).map(item => item.sku));
                 }
                 
-                setSupplierStockItems(data || []);
+                setSyncCacheItems(data || []);
             } catch (error) {
-                console.error('Error cargando costos de proveedor:', error);
+                console.error('Error cargando costos de sync_cache:', error);
             }
         };
 
-        fetchSupplierStockItems();
+        fetchSyncCacheItems();
     }, []);
 
     // Función de sincronización automática
@@ -105,11 +105,11 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
-    // Procesar órdenes con cálculos de costos desde supplier_stock_items
+    // Procesar órdenes con cálculos de costos desde sync_cache
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         
-        console.log('DEBUG - Procesando órdenes. Total supplier items:', supplierStockItems.length);
+        console.log('DEBUG - Procesando órdenes. Total sync_cache items:', syncCacheItems.length);
         
         return salesOrders.map(order => {
             let orderTotalCost = 0;
@@ -120,22 +120,22 @@ const SalesView = () => {
                 // Buscar el producto por SKU para imágenes
                 const productInfo = products.find(p => p.sku === item.sku);
                 
-                // Buscar el costo en supplier_stock_items
-                const supplierInfo = supplierStockItems.find(s => s.sku === item.sku);
-                console.log('DEBUG - SupplierInfo encontrado para', item.sku, ':', supplierInfo);
+                // Buscar el costo en sync_cache
+                const syncCacheInfo = syncCacheItems.find(s => s.sku === item.sku);
+                console.log('DEBUG - SyncCacheInfo encontrado para', item.sku, ':', syncCacheInfo);
                 
                 let costWithVat = 'N/A';
                 
-                // Calcular costo con IVA si existe en supplier_stock_items
-                if (supplierInfo && supplierInfo.calculated_price && supplierInfo.calculated_price > 0) {
-                    const itemTotalCost = supplierInfo.calculated_price * item.quantity;
+                // Calcular costo con IVA si existe en sync_cache
+                if (syncCacheInfo && syncCacheInfo.calculated_price && syncCacheInfo.calculated_price > 0) {
+                    const itemTotalCost = syncCacheInfo.calculated_price * item.quantity;
                     orderTotalCost += itemTotalCost;
-                    costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
-                    costWithVat = (supplierInfo.calculated_price * 1.21).toFixed(2);
+                    costWithVat = (syncCacheInfo.calculated_price * 1.21).toFixed(2);
+                    console.log('DEBUG - Costo calculado para', item.sku, ':', costWithVat);
                 } else {
                     console.log('DEBUG - No se encontró costo válido para SKU:', item.sku);
-                    if (supplierInfo) {
-                        console.log('DEBUG - Supplier info existe pero cost_price es:', supplierInfo.cost_price);
+                    if (syncCacheInfo) {
+                        console.log('DEBUG - SyncCache info existe pero calculated_price es:', syncCacheInfo.calculated_price);
                     }
                 }
                 
@@ -174,7 +174,7 @@ const SalesView = () => {
                 total_cost_with_vat: totalCostWithVat
             };
         });
-    }, [salesOrders, products, supplierStockItems]);
+    }, [salesOrders, products, syncCacheItems]);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
