@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN SIMPLE: Solo arregla los problemas básicos sin complicar
+// VERSIÓN FINAL MEJORADA: Costos corregidos + Estética mejorada + Rendimiento optimizado
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -39,9 +39,28 @@ const SalesView = () => {
     const [expandedOrders, setExpandedOrders] = useState(new Set());
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+    const [supplierStockItems, setSupplierStockItems] = useState([]);
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
+
+    // Cargar datos de supplier_stock_items para obtener costos
+    useEffect(() => {
+        const fetchSupplierStockItems = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('supplier_stock_items')
+                    .select('sku, cost_price');
+                
+                if (error) throw error;
+                setSupplierStockItems(data || []);
+            } catch (error) {
+                console.error('Error cargando costos de proveedor:', error);
+            }
+        };
+
+        fetchSupplierStockItems();
+    }, []);
 
     // Función de sincronización automática
     const handleAutoSync = useCallback(async () => {
@@ -74,7 +93,7 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
-    // Procesar órdenes con cálculos simples y directos
+    // Procesar órdenes con cálculos de costos desde supplier_stock_items
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         
@@ -82,15 +101,17 @@ const SalesView = () => {
             let orderTotalCost = 0;
             
             const updatedOrderItems = order.order_items.map(item => {
-                // Buscar el producto por SKU
+                // Buscar el producto por SKU para imágenes
                 const productInfo = products.find(p => p.sku === item.sku);
+                // Buscar el costo en supplier_stock_items
+                const supplierInfo = supplierStockItems.find(s => s.sku === item.sku);
                 let costWithVat = 'N/A';
                 
-                // Calcular costo con IVA si existe el producto y tiene cost_price
-                if (productInfo && productInfo.cost_price) {
-                    const itemCost = productInfo.cost_price * item.quantity;
+                // Calcular costo con IVA si existe en supplier_stock_items
+                if (supplierInfo && supplierInfo.cost_price) {
+                    const itemCost = supplierInfo.cost_price * item.quantity;
                     orderTotalCost += itemCost;
-                    costWithVat = (productInfo.cost_price * 1.21).toFixed(2);
+                    costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
                 }
                 
                 // Manejar imágenes de forma simple
@@ -325,6 +346,13 @@ const SalesView = () => {
         setExpandedOrders(newSet);
     };
 
+    const clearAllFilters = () => {
+        setFilters({ shippingType: 'all', status: 'all' });
+        setSearchTerm('');
+    };
+
+    const hasActiveFilters = filters.shippingType !== 'all' || filters.status !== 'all' || searchTerm.trim() !== '';
+
     return (
         <div>
             {/* Header con controles de sincronización */}
@@ -368,39 +396,114 @@ const SalesView = () => {
                 </div>
             </div>
 
-            {/* Filtros y búsqueda */}
-            <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg mb-6 space-y-4">
-                <input 
-                    type="text" 
-                    placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." 
-                    value={searchTerm} 
-                    onChange={(e) => setSearchTerm(e.target.value)} 
-                    className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-400" 
-                />
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <select 
-                        value={filters.shippingType} 
-                        onChange={e => setFilters({...filters, shippingType: e.target.value})} 
-                        className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"
-                    >
-                        <option value="all">Todos los Envíos</option>
-                        <option value="flex">Flex</option>
-                        <option value="mercado_envios">Mercado Envíos</option>
-                    </select>
+            {/* Filtros mejorados estéticamente */}
+            <div className="mb-6 p-6 bg-gradient-to-r from-gray-900/80 to-gray-800/80 rounded-xl border border-gray-700/50 backdrop-blur-sm">
+                <div className="space-y-4">
+                    {/* Barra de búsqueda mejorada */}
+                    <div className="relative group">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <svg className="w-5 h-5 text-gray-400 group-hover:text-blue-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                        </div>
+                        <input 
+                            type="text" 
+                            placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." 
+                            value={searchTerm} 
+                            onChange={(e) => setSearchTerm(e.target.value)} 
+                            className="w-full pl-10 pr-10 py-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200" 
+                        />
+                        {searchTerm && (
+                            <button
+                                onClick={() => setSearchTerm('')}
+                                className="absolute inset-y-0 right-0 pr-3 flex items-center hover:text-red-400 transition-colors"
+                            >
+                                <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        )}
+                    </div>
                     
-                    <select 
-                        value={filters.status} 
-                        onChange={e => setFilters({...filters, status: e.target.value})} 
-                        className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md text-white"
-                    >
-                        <option value="all">Todos los Estados</option>
-                        <option value="Recibido">Recibido</option>
-                        <option value="Pendiente">Pendiente</option>
-                        <option value="En Preparación">En Preparación</option>
-                        <option value="daily_dispatch">Envíos del Día</option>
-                        <option value="cancelled">Canceladas</option>
-                    </select>
+                    {/* Filtros en cards separadas */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Filtro de Tipo de Envío */}
+                        <div className="group">
+                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
+                                <svg className="w-4 h-4 text-gray-400 group-hover:text-blue-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                </svg>
+                                <span>Tipo de Envío</span>
+                            </label>
+                            <select 
+                                value={filters.shippingType} 
+                                onChange={e => setFilters({...filters, shippingType: e.target.value})} 
+                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
+                            >
+                                <option value="all">🚚 Todos los Envíos</option>
+                                <option value="flex">⚡ Flex</option>
+                                <option value="mercado_envios">📦 Mercado Envíos</option>
+                            </select>
+                        </div>
+                        
+                        {/* Filtro de Estado */}
+                        <div className="group">
+                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
+                                <svg className="w-4 h-4 text-gray-400 group-hover:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span>Estado</span>
+                            </label>
+                            <select 
+                                value={filters.status} 
+                                onChange={e => setFilters({...filters, status: e.target.value})} 
+                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 transition-all duration-200"
+                            >
+                                <option value="all">📋 Todos los Estados</option>
+                                <option value="Recibido">📥 Recibido</option>
+                                <option value="Pendiente">⏳ Pendiente</option>
+                                <option value="En Preparación">🔧 En Preparación</option>
+                                <option value="daily_dispatch">🌅 Envíos del Día</option>
+                                <option value="cancelled">❌ Canceladas</option>
+                            </select>
+                        </div>
+                        
+                        {/* Botón de limpiar filtros */}
+                        <div className="flex items-end">
+                            {hasActiveFilters && (
+                                <button
+                                    onClick={clearAllFilters}
+                                    className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-red-600/80 to-pink-600/80 hover:from-red-600 hover:to-pink-600 text-white font-medium rounded-lg transition-all duration-200 transform hover:scale-105"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                    <span>Limpiar Filtros</span>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    
+                    {/* Indicadores de filtros activos */}
+                    {hasActiveFilters && (
+                        <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-700/50">
+                            {searchTerm && (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                    🔍 "{searchTerm}"
+                                </span>
+                            )}
+                            {filters.shippingType !== 'all' && (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                                    🚚 {filters.shippingType === 'flex' ? 'Flex' : 'Mercado Envíos'}
+                                </span>
+                            )}
+                            {filters.status !== 'all' && (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
+                                    📋 {filters.status}
+                                </span>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -561,4 +664,44 @@ const SalesView = () => {
                             </div>
                         </div>
                     )) : ( 
-                        <div className="text-center py-12 px-6 bg-gray-800 border border-gray
+                        <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg">
+                            <h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3>
+                            <p className="mt-1 text-sm text-gray-400">
+                                Prueba a sincronizar o ajusta tu búsqueda y filtros.
+                            </p>
+                        </div>
+                    )
+                )}
+            </div>
+            
+            {/* Paginación */}
+            <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700">
+                <button 
+                    onClick={() => setPage(p => Math.max(0, p - 1))} 
+                    disabled={page === 0 || isLoading} 
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50"
+                >
+                    Anterior
+                </button>
+                <span className="text-gray-400">
+                    Página {page + 1} de {totalPages > 0 ? totalPages : 1}
+                </span>
+                <button 
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} 
+                    disabled={page >= totalPages - 1 || isLoading} 
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50"
+                >
+                    Siguiente
+                </button>
+            </div>
+            
+            {/* Modal de imagen */}
+            <ImageZoomModal 
+                imageUrl={zoomedImageUrl} 
+                onClose={() => setZoomedImageUrl(null)} 
+            />
+        </div>
+    );
+};
+
+export default SalesView;
