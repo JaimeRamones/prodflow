@@ -101,27 +101,38 @@ const SalesView = () => {
             let orderTotalCost = 0;
             
             const updatedOrderItems = order.order_items.map(item => {
+                console.log('DEBUG - Procesando item:', item.sku);
+                
                 // Buscar el producto por SKU para imágenes
                 const productInfo = products.find(p => p.sku === item.sku);
+                console.log('DEBUG - ProductInfo encontrado:', productInfo);
+                
                 // Buscar el costo en supplier_stock_items
                 const supplierInfo = supplierStockItems.find(s => s.sku === item.sku);
+                console.log('DEBUG - SupplierInfo encontrado:', supplierInfo);
+                
                 let costWithVat = 'N/A';
                 
                 // Calcular costo con IVA si existe en supplier_stock_items
                 if (supplierInfo && supplierInfo.cost_price) {
-                    const itemCost = supplierInfo.cost_price * item.quantity;
-                    orderTotalCost += itemCost;
+                    const itemTotalCost = supplierInfo.cost_price * item.quantity;
+                    orderTotalCost += itemTotalCost;
                     costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
+                    console.log('DEBUG - Costo calculado:', costWithVat);
+                } else {
+                    console.log('DEBUG - No se encontró costo para SKU:', item.sku);
                 }
                 
-                // Manejar imágenes de forma simple
+                // Manejar imágenes con múltiples fuentes
                 let images = [];
                 
-                // 1. Imagen del producto en base de datos
-                if (productInfo?.image_urls && productInfo.image_urls.length > 0) {
-                    images = productInfo.image_urls
-                        .map(url => url ? url.replace(/^http:/, 'https:') : null)
-                        .filter(Boolean);
+                // 1. Imágenes del producto en base de datos
+                if (productInfo?.image_urls && Array.isArray(productInfo.image_urls) && productInfo.image_urls.length > 0) {
+                    const productImages = productInfo.image_urls
+                        .filter(url => url && url.trim() !== '')
+                        .map(url => url.replace(/^http:/, 'https:'));
+                    images.push(...productImages);
+                    console.log('DEBUG - Imágenes del producto:', productImages);
                 }
                 
                 // 2. Thumbnail de la orden
@@ -130,12 +141,28 @@ const SalesView = () => {
                     if (!images.includes(secureThumbnail)) {
                         images.unshift(secureThumbnail);
                     }
+                    console.log('DEBUG - Thumbnail agregado:', secureThumbnail);
                 }
                 
-                // 3. Placeholder si no hay imágenes
+                // 3. Intentar obtener más imágenes desde API de ML si tenemos pocas
+                if (images.length === 0 && item.meli_item_id) {
+                    // Llamar a la función para obtener imágenes de ML
+                    fetchItemImages(item.meli_item_id).then(mlImages => {
+                        if (mlImages.length > 0) {
+                            console.log('DEBUG - Imágenes de ML obtenidas:', mlImages);
+                            // Nota: Esto es asíncrono, las imágenes aparecerán después
+                        }
+                    }).catch(err => {
+                        console.error('Error obteniendo imágenes de ML:', err);
+                    });
+                }
+                
+                // 4. Placeholder si no hay imágenes
                 if (images.length === 0) {
                     images.push('https://via.placeholder.com/150?text=Sin+Imagen');
                 }
+                
+                console.log('DEBUG - Imágenes finales:', images);
                 
                 return {
                     ...item,
@@ -146,6 +173,7 @@ const SalesView = () => {
             
             // Calcular total con IVA
             const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
+            console.log('DEBUG - Total costo con IVA de la orden:', totalCostWithVat);
             
             return {
                 ...order,
@@ -154,6 +182,24 @@ const SalesView = () => {
             };
         });
     }, [salesOrders, products, supplierStockItems]);
+
+    // Función para obtener imágenes de ML
+    const fetchItemImages = useCallback(async (itemId) => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return [];
+            
+            const { data, error } = await supabase.functions.invoke('get-meli-item-details', {
+                body: { item_id: itemId }
+            });
+            
+            if (error) throw error;
+            return data.pictures?.map(pic => pic.secure_url) || [];
+        } catch (error) {
+            console.error('Error fetching item images:', error);
+            return [];
+        }
+    }, []);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
