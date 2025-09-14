@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CORREGIDA: Sincronización automática, imágenes corregidas, cálculos completos de IVA y costos
+// VERSIÓN SIMPLE: Solo arregla los problemas básicos sin complicar
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -43,131 +43,7 @@ const SalesView = () => {
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
 
-    // Función para obtener imágenes de un item específico desde la API de MercadoLibre
-    const fetchItemImages = useCallback(async (itemId) => {
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return [];
-            
-            const { data, error } = await supabase.functions.invoke('get-meli-item-details', {
-                body: { item_id: itemId }
-            });
-            
-            if (error) throw error;
-            return data.pictures?.map(pic => pic.secure_url) || [];
-        } catch (error) {
-            console.error('Error fetching item images:', error);
-            return [];
-        }
-    }, []);
-
-    // Función para enriquecer las órdenes con datos completos
-    const enrichOrdersWithCompleteData = useCallback(async (orders) => {
-        const enrichedOrders = await Promise.all(
-            orders.map(async (order) => {
-                let orderTotalCost = 0;
-                
-                // Enriquecer cada item de la orden
-                const enrichedOrderItems = await Promise.all(
-                    order.order_items.map(async (item) => {
-                        const productInfo = products.find(p => p.sku === item.sku);
-                        let costWithVat = 'N/A';
-                        let supplierCost = 0;
-                        
-                        // Calcular costo del producto + IVA
-                        if (productInfo && productInfo.cost_price) {
-                            supplierCost = productInfo.cost_price * item.quantity;
-                            orderTotalCost += supplierCost;
-                            costWithVat = (productInfo.cost_price * 1.21).toFixed(2);
-                        }
-                        
-                        // Obtener imágenes de múltiples fuentes
-                        let images = [];
-                        
-                        // 1. Imágenes del producto en nuestra base de datos
-                        if (productInfo?.image_urls) {
-                            const productImages = productInfo.image_urls
-                                .map(url => url ? url.replace(/^http:/, 'https:') : null)
-                                .filter(Boolean);
-                            images.push(...productImages);
-                        }
-                        
-                        // 2. Thumbnail de la orden (si existe)
-                        if (item.thumbnail_url) {
-                            const secureThumbnail = item.thumbnail_url.replace(/^http:/, 'https:');
-                            if (!images.includes(secureThumbnail)) {
-                                images.unshift(secureThumbnail);
-                            }
-                        }
-                        
-                        // 3. Intentar obtener imágenes desde la API de ML (si no tenemos suficientes)
-                        if (images.length === 0 && item.meli_item_id) {
-                            try {
-                                const mlImages = await fetchItemImages(item.meli_item_id);
-                                images.push(...mlImages);
-                            } catch (error) {
-                                console.error('Error fetching ML images:', error);
-                            }
-                        }
-                        
-                        // 4. Fallback a placeholder si no hay imágenes
-                        if (images.length === 0) {
-                            images.push('https://via.placeholder.com/150?text=Sin+Imagen');
-                        }
-                        
-                        return {
-                            ...item,
-                            cost_with_vat: costWithVat,
-                            supplier_cost: supplierCost,
-                            images: images
-                        };
-                    })
-                );
-                
-                // Obtener información completa del envío si existe shipping_id
-                let shippingCost = order.shipping_cost || 0;
-                if (order.shipping_id) {
-                    try {
-                        const { data: { session } } = await supabase.auth.getSession();
-                        if (session) {
-                            const { data, error } = await supabase.functions.invoke('get-meli-shipment-details', {
-                                body: { shipment_id: order.shipping_id }
-                            });
-                            
-                            if (!error && data.cost) {
-                                shippingCost = data.cost;
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Error fetching shipping details:', error);
-                    }
-                }
-                
-                // Calcular totales mejorados
-                const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
-                const totalCostWithVatAndShipping = (parseFloat(totalCostWithVat) + shippingCost).toFixed(2);
-                
-                return {
-                    ...order,
-                    order_items: enrichedOrderItems,
-                    total_cost_with_vat: totalCostWithVat,
-                    total_cost_with_vat_and_shipping: totalCostWithVatAndShipping,
-                    shipping_cost: shippingCost,
-                    supplier_total_cost: orderTotalCost
-                };
-            })
-        );
-        
-        return enrichedOrders;
-    }, [products, fetchItemImages]);
-
-    // Órdenes procesadas con datos completos
-    const processedOrders = useMemo(() => {
-        if (!salesOrders) return [];
-        return salesOrders; // Las órdenes ya están enriquecidas
-    }, [salesOrders]);
-    
-    // Función de sincronización automática mejorada
+    // Función de sincronización automática
     const handleAutoSync = useCallback(async () => {
         if (!autoSyncEnabled) return;
         
@@ -177,26 +53,17 @@ const SalesView = () => {
             
             await fetchSalesOrders();
             setLastSyncTime(new Date());
-            
-            // Solo mostrar mensaje si es sincronización manual
-            if (!autoSyncEnabled) {
-                showMessage(data.message || 'Ventas sincronizadas automáticamente.', 'success');
-            }
         } catch (err) {
             console.error('Error en sincronización automática:', err);
-            // No mostrar error en auto-sync para evitar spam de notificaciones
         }
-    }, [autoSyncEnabled, fetchSalesOrders, showMessage]);
+    }, [autoSyncEnabled, fetchSalesOrders]);
 
     // Configurar sincronización automática
     useEffect(() => {
         let interval;
         
         if (autoSyncEnabled) {
-            // Sincronizar inmediatamente al activar
-            handleAutoSync();
-            
-            // Configurar intervalo de sincronización
+            handleAutoSync(); // Sincronizar inmediatamente
             interval = setInterval(handleAutoSync, AUTO_SYNC_INTERVAL);
         }
         
@@ -207,15 +74,65 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
-    // Enriquecer órdenes cuando cambien los datos base
-    useEffect(() => {
-        if (salesOrders && products.length > 0) {
-            enrichOrdersWithCompleteData(salesOrders).then(enrichedOrders => {
-                // Aquí podrías actualizar un estado local si necesitas los datos enriquecidos
-                setIsLoading(false);
+    // Procesar órdenes con cálculos simples y directos
+    const processedOrders = useMemo(() => {
+        if (!salesOrders) return [];
+        
+        return salesOrders.map(order => {
+            let orderTotalCost = 0;
+            
+            const updatedOrderItems = order.order_items.map(item => {
+                // Buscar el producto por SKU
+                const productInfo = products.find(p => p.sku === item.sku);
+                let costWithVat = 'N/A';
+                
+                // Calcular costo con IVA si existe el producto y tiene cost_price
+                if (productInfo && productInfo.cost_price) {
+                    const itemCost = productInfo.cost_price * item.quantity;
+                    orderTotalCost += itemCost;
+                    costWithVat = (productInfo.cost_price * 1.21).toFixed(2);
+                }
+                
+                // Manejar imágenes de forma simple
+                let images = [];
+                
+                // 1. Imagen del producto en base de datos
+                if (productInfo?.image_urls && productInfo.image_urls.length > 0) {
+                    images = productInfo.image_urls
+                        .map(url => url ? url.replace(/^http:/, 'https:') : null)
+                        .filter(Boolean);
+                }
+                
+                // 2. Thumbnail de la orden
+                if (item.thumbnail_url) {
+                    const secureThumbnail = item.thumbnail_url.replace(/^http:/, 'https:');
+                    if (!images.includes(secureThumbnail)) {
+                        images.unshift(secureThumbnail);
+                    }
+                }
+                
+                // 3. Placeholder si no hay imágenes
+                if (images.length === 0) {
+                    images.push('https://via.placeholder.com/150?text=Sin+Imagen');
+                }
+                
+                return {
+                    ...item,
+                    cost_with_vat: costWithVat,
+                    images: images
+                };
             });
-        }
-    }, [salesOrders, products, enrichOrdersWithCompleteData]);
+            
+            // Calcular total con IVA
+            const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
+            
+            return {
+                ...order,
+                order_items: updatedOrderItems,
+                total_cost_with_vat: totalCostWithVat
+            };
+        });
+    }, [salesOrders, products, supplierStockItems]);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
@@ -644,44 +561,4 @@ const SalesView = () => {
                             </div>
                         </div>
                     )) : ( 
-                        <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg">
-                            <h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3>
-                            <p className="mt-1 text-sm text-gray-400">
-                                Prueba a sincronizar o ajusta tu búsqueda y filtros.
-                            </p>
-                        </div>
-                    )
-                )}
-            </div>
-            
-            {/* Paginación */}
-            <div className="flex justify-between items-center p-4 mt-4 bg-gray-800 rounded-lg border border-gray-700">
-                <button 
-                    onClick={() => setPage(p => Math.max(0, p - 1))} 
-                    disabled={page === 0 || isLoading} 
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50"
-                >
-                    Anterior
-                </button>
-                <span className="text-gray-400">
-                    Página {page + 1} de {totalPages > 0 ? totalPages : 1}
-                </span>
-                <button 
-                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} 
-                    disabled={page >= totalPages - 1 || isLoading} 
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg disabled:opacity-50"
-                >
-                    Siguiente
-                </button>
-            </div>
-            
-            {/* Modal de imagen */}
-            <ImageZoomModal 
-                imageUrl={zoomedImageUrl} 
-                onClose={() => setZoomedImageUrl(null)} 
-            />
-        </div>
-    );
-};
-
-export default SalesView;
+                        <div className="text-center py-12 px-6 bg-gray-800 border border-gray
