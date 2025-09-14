@@ -162,9 +162,9 @@ const SalesView = () => {
                     console.log('DEBUG - Thumbnail agregado:', secureThumbnail);
                 }
                 
-                // 3. Placeholder si no hay imágenes (por ahora, sin llamada asíncrona)
+                // 3. Placeholder si no hay imágenes (usando un placeholder que funcione)
                 if (images.length === 0) {
-                    images.push('https://via.placeholder.com/150?text=Sin+Imagen');
+                    images.push('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgdmlld0JveD0iMCAwIDE1MCAxNTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxNTAiIGhlaWdodD0iMTUwIiBmaWxsPSIjMzc0MTUxIi8+CjxwYXRoIGQ9Ik03NSA0MEg2MEwzNSA2NVYxMTBIMTE1VjY1TDkwIDQwSDc1WiIgZmlsbD0iIzZCNzI4MCIvPgo8cGF0aCBkPSJNNjAgODBMMzUgMTA1VjExMEg2MFY4MFoiIGZpbGw9IiM5Q0E0QUYiLz4KPHN2Zz4K');
                 }
                 
                 console.log('DEBUG - Imágenes finales:', images);
