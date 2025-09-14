@@ -93,6 +93,24 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
+    // Función para obtener imágenes de ML (debe estar ANTES de processedOrders)
+    const fetchItemImages = useCallback(async (itemId) => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return [];
+            
+            const { data, error } = await supabase.functions.invoke('get-meli-item-details', {
+                body: { item_id: itemId }
+            });
+            
+            if (error) throw error;
+            return data.pictures?.map(pic => pic.secure_url) || [];
+        } catch (error) {
+            console.error('Error fetching item images:', error);
+            return [];
+        }
+    }, []);
+
     // Procesar órdenes con cálculos de costos desde supplier_stock_items
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
@@ -144,20 +162,7 @@ const SalesView = () => {
                     console.log('DEBUG - Thumbnail agregado:', secureThumbnail);
                 }
                 
-                // 3. Intentar obtener más imágenes desde API de ML si tenemos pocas
-                if (images.length === 0 && item.meli_item_id) {
-                    // Llamar a la función para obtener imágenes de ML
-                    fetchItemImages(item.meli_item_id).then(mlImages => {
-                        if (mlImages.length > 0) {
-                            console.log('DEBUG - Imágenes de ML obtenidas:', mlImages);
-                            // Nota: Esto es asíncrono, las imágenes aparecerán después
-                        }
-                    }).catch(err => {
-                        console.error('Error obteniendo imágenes de ML:', err);
-                    });
-                }
-                
-                // 4. Placeholder si no hay imágenes
+                // 3. Placeholder si no hay imágenes (por ahora, sin llamada asíncrona)
                 if (images.length === 0) {
                     images.push('https://via.placeholder.com/150?text=Sin+Imagen');
                 }
@@ -182,24 +187,6 @@ const SalesView = () => {
             };
         });
     }, [salesOrders, products, supplierStockItems]);
-
-    // Función para obtener imágenes de ML
-    const fetchItemImages = useCallback(async (itemId) => {
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return [];
-            
-            const { data, error } = await supabase.functions.invoke('get-meli-item-details', {
-                body: { item_id: itemId }
-            });
-            
-            if (error) throw error;
-            return data.pictures?.map(pic => pic.secure_url) || [];
-        } catch (error) {
-            console.error('Error fetching item images:', error);
-            return [];
-        }
-    }, []);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
