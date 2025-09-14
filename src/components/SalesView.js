@@ -39,7 +39,7 @@ const SalesView = () => {
     const [expandedOrders, setExpandedOrders] = useState(new Set());
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
-    const [supplierStockItems, setSupplierStockItems] = useState([]);
+    const [syncCacheItems, setSyncCacheItems] = useState([]);
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
@@ -50,8 +50,8 @@ const SalesView = () => {
             try {
                 console.log('DEBUG - Iniciando carga de supplier_stock_items...');
                 const { data, error } = await supabase
-                    .from('supplier_stock_items')
-                    .select('sku, cost_price');
+                    .from('sync_cache')
+                    .select('sku, calculated_price');
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar supplier_stock_items:', error);
@@ -127,11 +127,11 @@ const SalesView = () => {
                 let costWithVat = 'N/A';
                 
                 // Calcular costo con IVA si existe en supplier_stock_items
-                if (supplierInfo && supplierInfo.cost_price && supplierInfo.cost_price > 0) {
-                    const itemTotalCost = supplierInfo.cost_price * item.quantity;
+                if (supplierInfo && supplierInfo.calculated_price && supplierInfo.calculated_price > 0) {
+                    const itemTotalCost = supplierInfo.calculated_price * item.quantity;
                     orderTotalCost += itemTotalCost;
                     costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
-                    console.log('DEBUG - Costo calculado para', item.sku, ':', costWithVat);
+                    costWithVat = (supplierInfo.calculated_price * 1.21).toFixed(2);
                 } else {
                     console.log('DEBUG - No se encontró costo válido para SKU:', item.sku);
                     if (supplierInfo) {
