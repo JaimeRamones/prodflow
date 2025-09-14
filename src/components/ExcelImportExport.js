@@ -13,7 +13,11 @@ const ExcelImportExport = () => {
     const [previewData, setPreviewData] = useState([]);
     const [showPreview, setShowPreview] = useState(false);
     const [importStats, setImportStats] = useState(null);
+    const [importProgress, setImportProgress] = useState({ current: 0, total: 0, percentage: 0 });
+    const [isProcessing, setIsProcessing] = useState(false);
     const fileInputRef = useRef(null);
+
+    const BATCH_SIZE = 50; // Procesar en lotes de 50 productos
 
     // Función para leer archivo Excel
     const readExcelFile = (file) => {
@@ -94,11 +98,12 @@ const ExcelImportExport = () => {
         try {
             const templateData = [
                 // Headers con descripciones
-                ['SKU', 'Nombre', 'Marca', 'Proveedor_ID', 'Rubro', 'Subrubro', 'Stock_Total', 'Costo', 'Precio_Venta'],
-                ['Obligatorio', 'Obligatorio', 'Opcional', 'ID del proveedor', 'Opcional', 'Opcional', 'Número entero', 'Precio decimal', 'Se calcula automático'],
+                ['SKU', 'Nombre', 'Marca', 'Proveedor_ID', 'Rubro', 'Subrubro', 'Stock_Total'],
+                ['Obligatorio', 'Obligatorio', 'Opcional', 'ID del proveedor', 'Opcional', 'Opcional', 'Número entero'],
+                ['NOTA:', 'El costo se obtiene automáticamente de supplier_stock_items', '', '', '', '', ''],
                 // Ejemplos
-                ['AIMET M 68', 'Bomba De Aceite Chevrolet Zafira 2.0 16v', 'AIMET', '1', 'Autopartes', 'Motor', '10', '76270.66', ''],
-                ['R 636193 NBC', 'Kit 2 Ruleman Rueda Delantera Hyundai Atos', 'R', '2', 'Autopartes', 'Suspensión', '5', '32500.00', ''],
+                ['AIMET M 68', 'Bomba De Aceite Chevrolet Zafira 2.0 16v', 'AIMET', '1', 'Autopartes', 'Motor', '10'],
+                ['R 636193 NBC', 'Kit 2 Ruleman Rueda Delantera Hyundai Atos', 'R', '2', 'Autopartes', 'Suspensión', '5'],
             ];
 
             // Crear hoja de proveedores disponibles
@@ -129,7 +134,7 @@ const ExcelImportExport = () => {
             const ws1 = window.XLSX.utils.aoa_to_sheet(templateData);
             ws1['!cols'] = [
                 { wch: 15 }, { wch: 40 }, { wch: 15 }, { wch: 12 }, 
-                { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }
+                { wch: 15 }, { wch: 20 }, { wch: 12 }
             ];
             window.XLSX.utils.book_append_sheet(wb, ws1, 'Plantilla_Productos');
 
@@ -158,7 +163,7 @@ const ExcelImportExport = () => {
     // Función para validar datos
     const validateRowData = (row, index) => {
         const errors = [];
-        const [sku, name, brand, supplierId, rubro, subrubro, stockTotal, costPrice] = row;
+        const [sku, name, brand, supplierId, rubro, subrubro, stockTotal] = row;
 
         if (!sku || sku.toString().trim() === '') {
             errors.push(`Fila ${index + 1}: SKU es obligatorio`);
@@ -186,10 +191,6 @@ const ExcelImportExport = () => {
 
         if (stockTotal && (isNaN(stockTotal) || parseInt(stockTotal) < 0)) {
             errors.push(`Fila ${index + 1}: Stock debe ser un número entero positivo`);
-        }
-
-        if (costPrice && (isNaN(costPrice) || parseFloat(costPrice) < 0)) {
-            errors.push(`Fila ${index + 1}: Costo debe ser un número positivo`);
         }
 
         return errors;
@@ -223,7 +224,7 @@ const ExcelImportExport = () => {
                 const errors = validateRowData(row, index);
                 allErrors = [...allErrors, ...errors];
 
-                const [sku, name, brand, supplierId, rubro, subrubro, stockTotal, costPrice] = row;
+                const [sku, name, brand, supplierId, rubro, subrubro, stockTotal] = row;
                 
                 return {
                     sku: sku ? sku.toString().trim().toUpperCase() : '',
@@ -233,7 +234,6 @@ const ExcelImportExport = () => {
                     rubro: rubro ? rubro.toString().trim() : '',
                     subrubro: subrubro ? subrubro.toString().trim() : '',
                     stock_total: stockTotal ? parseInt(stockTotal) : 0,
-                    cost_price: costPrice ? parseFloat(costPrice) : 0,
                     rowNumber: index + 2, // +2 porque empezamos desde la fila 2 del Excel
                     errors: errors
                 };
@@ -253,9 +253,111 @@ const ExcelImportExport = () => {
         }
     };
 
-    // Función para confirmar importación
+    // Función para procesar en lotes con progreso
+    const processBatch = async (batch, supplierStockData, batchIndex, totalBatches) => {
+        const batchResults = { newProducts: 0, updatedProducts: 0, errors: 0 };
+
+        for (const item of batch) {
+            try {
+                // Buscar costo en supplier_stock_items
+                let costPrice = 0;
+                if (supplierStockData) {
+                    const supplierStock = supplierStockData.find(s => s.sku === item.sku);
+                    if (supplierStock && supplierStock.cost_price) {
+                        costPrice = parseFloat(supplierStock.cost_price);
+                    }
+                }
+
+                // Verificar si el producto ya existe
+                const existingProduct = products.find(p => 
+                    p.sku.toLowerCase() === item.sku.toLowerCase()
+                );
+
+                if (existingProduct) {
+                    // Actualizar producto existente
+                    const updateData = {
+                        name: item.name || existingProduct.name,
+                        brand: item.brand || existingProduct.brand,
+                        supplier_id: item.supplier_id || existingProduct.supplier_id,
+                        rubro: item.rubro || existingProduct.rubro,
+                        subrubro: item.subrubro || existingProduct.subrubro,
+                        stock_total: item.stock_total,
+                        stock_disponible: item.stock_total,
+                        cost_price: costPrice > 0 ? costPrice : existingProduct.cost_price
+                    };
+
+                    // Calcular precio de venta si hay proveedor y costo
+                    if (updateData.supplier_id && updateData.cost_price > 0) {
+                        const supplier = suppliers.find(s => s.id === updateData.supplier_id);
+                        if (supplier && supplier.markup) {
+                            const markup = 1 + (supplier.markup / 100);
+                            updateData.sale_price = (updateData.cost_price * markup).toFixed(2);
+                        }
+                    }
+
+                    const { error } = await supabase
+                        .from('products')
+                        .update(updateData)
+                        .eq('id', existingProduct.id);
+
+                    if (error) throw error;
+                    batchResults.updatedProducts++;
+                } else {
+                    // Crear nuevo producto
+                    const newProductData = {
+                        sku: item.sku,
+                        name: item.name,
+                        brand: item.brand,
+                        supplier_id: item.supplier_id,
+                        rubro: item.rubro,
+                        subrubro: item.subrubro,
+                        stock_total: item.stock_total,
+                        stock_reservado: 0,
+                        stock_disponible: item.stock_total,
+                        cost_price: costPrice,
+                        sale_price: 0
+                    };
+
+                    // Calcular precio de venta si hay proveedor y costo
+                    if (newProductData.supplier_id && newProductData.cost_price > 0) {
+                        const supplier = suppliers.find(s => s.id === newProductData.supplier_id);
+                        if (supplier && supplier.markup) {
+                            const markup = 1 + (supplier.markup / 100);
+                            newProductData.sale_price = (newProductData.cost_price * markup).toFixed(2);
+                        }
+                    }
+
+                    const { error } = await supabase
+                        .from('products')
+                        .insert([newProductData]);
+
+                    if (error) throw error;
+                    batchResults.newProducts++;
+                }
+            } catch (itemError) {
+                console.error(`Error procesando SKU ${item.sku}:`, itemError);
+                batchResults.errors++;
+            }
+        }
+
+        // Actualizar progreso
+        const current = (batchIndex + 1) * BATCH_SIZE;
+        const percentage = Math.round((current / (totalBatches * BATCH_SIZE)) * 100);
+        setImportProgress({ 
+            current: Math.min(current, totalBatches * BATCH_SIZE), 
+            total: totalBatches * BATCH_SIZE, 
+            percentage 
+        });
+
+        return batchResults;
+    };
+
+    // Función para confirmar importación con procesamiento por lotes
     const handleConfirmImport = async () => {
         setIsImporting(true);
+        setIsProcessing(true);
+        setImportProgress({ current: 0, total: 0, percentage: 0 });
+        
         try {
             const validData = previewData.filter(item => item.errors.length === 0);
             
@@ -263,93 +365,67 @@ const ExcelImportExport = () => {
                 throw new Error('No hay datos válidos para importar');
             }
 
-            let newProducts = 0;
-            let updatedProducts = 0;
-            let errors = 0;
+            // Cargar datos de supplier_stock_items para obtener costos
+            showMessage('Cargando costos de proveedores...', 'info');
+            const { data: supplierStockData, error: stockError } = await supabase
+                .from('supplier_stock_items')
+                .select('sku, cost_price');
 
-            for (const item of validData) {
+            if (stockError) {
+                console.error('Error cargando supplier_stock_items:', stockError);
+            }
+
+            // Dividir en lotes
+            const batches = [];
+            for (let i = 0; i < validData.length; i += BATCH_SIZE) {
+                batches.push(validData.slice(i, i + BATCH_SIZE));
+            }
+
+            // Inicializar progreso
+            setImportProgress({ 
+                current: 0, 
+                total: validData.length, 
+                percentage: 0 
+            });
+
+            let totalResults = { newProducts: 0, updatedProducts: 0, errors: 0 };
+
+            showMessage(`Procesando ${validData.length} productos en ${batches.length} lotes...`, 'info');
+
+            // Procesar cada lote secuencialmente
+            for (let i = 0; i < batches.length; i++) {
+                const batch = batches[i];
+                
                 try {
-                    // Verificar si el producto ya existe
-                    const existingProduct = products.find(p => 
-                        p.sku.toLowerCase() === item.sku.toLowerCase()
-                    );
+                    const batchResults = await processBatch(batch, supplierStockData, i, batches.length);
+                    
+                    // Acumular resultados
+                    totalResults.newProducts += batchResults.newProducts;
+                    totalResults.updatedProducts += batchResults.updatedProducts;
+                    totalResults.errors += batchResults.errors;
 
-                    if (existingProduct) {
-                        // Actualizar producto existente
-                        const updateData = {
-                            name: item.name || existingProduct.name,
-                            brand: item.brand || existingProduct.brand,
-                            supplier_id: item.supplier_id || existingProduct.supplier_id,
-                            rubro: item.rubro || existingProduct.rubro,
-                            subrubro: item.subrubro || existingProduct.subrubro,
-                            stock_total: item.stock_total,
-                            stock_disponible: item.stock_total, // Asumimos que todo el stock está disponible
-                            cost_price: item.cost_price || existingProduct.cost_price
-                        };
-
-                        // Calcular precio de venta si hay proveedor y costo
-                        if (updateData.supplier_id && updateData.cost_price > 0) {
-                            const supplier = suppliers.find(s => s.id === updateData.supplier_id);
-                            if (supplier && supplier.markup) {
-                                const markup = 1 + (supplier.markup / 100);
-                                updateData.sale_price = (updateData.cost_price * markup).toFixed(2);
-                            }
-                        }
-
-                        const { error } = await supabase
-                            .from('products')
-                            .update(updateData)
-                            .eq('id', existingProduct.id);
-
-                        if (error) throw error;
-                        updatedProducts++;
-                    } else {
-                        // Crear nuevo producto
-                        const newProductData = {
-                            sku: item.sku,
-                            name: item.name,
-                            brand: item.brand,
-                            supplier_id: item.supplier_id,
-                            rubro: item.rubro,
-                            subrubro: item.subrubro,
-                            stock_total: item.stock_total,
-                            stock_reservado: 0,
-                            stock_disponible: item.stock_total,
-                            cost_price: item.cost_price,
-                            sale_price: 0
-                        };
-
-                        // Calcular precio de venta si hay proveedor y costo
-                        if (newProductData.supplier_id && newProductData.cost_price > 0) {
-                            const supplier = suppliers.find(s => s.id === newProductData.supplier_id);
-                            if (supplier && supplier.markup) {
-                                const markup = 1 + (supplier.markup / 100);
-                                newProductData.sale_price = (newProductData.cost_price * markup).toFixed(2);
-                            }
-                        }
-
-                        const { error } = await supabase
-                            .from('products')
-                            .insert([newProductData]);
-
-                        if (error) throw error;
-                        newProducts++;
+                    // Pequeña pausa entre lotes para no sobrecargar la base de datos
+                    if (i < batches.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
                     }
-                } catch (itemError) {
-                    console.error(`Error procesando SKU ${item.sku}:`, itemError);
-                    errors++;
+
+                } catch (batchError) {
+                    console.error(`Error en lote ${i + 1}:`, batchError);
+                    totalResults.errors += batch.length;
                 }
             }
 
-            setImportStats({ newProducts, updatedProducts, errors, total: validData.length });
+            setImportStats({ 
+                ...totalResults, 
+                total: validData.length 
+            });
             
             // Actualizar la lista de productos
+            showMessage('Actualizando inventario...', 'info');
             await fetchProducts();
             
-            showMessage(
-                `Importación completada: ${newProducts} productos nuevos, ${updatedProducts} actualizados, ${errors} errores`,
-                errors > 0 ? 'warning' : 'success'
-            );
+            const message = `Importación completada: ${totalResults.newProducts} productos nuevos, ${totalResults.updatedProducts} actualizados, ${totalResults.errors} errores. Costos obtenidos automáticamente de supplier_stock_items.`;
+            showMessage(message, totalResults.errors > 0 ? 'warning' : 'success');
 
             // Limpiar
             setShowPreview(false);
@@ -362,6 +438,8 @@ const ExcelImportExport = () => {
             showMessage(`Error durante la importación: ${error.message}`, 'error');
         } finally {
             setIsImporting(false);
+            setIsProcessing(false);
+            setImportProgress({ current: 0, total: 0, percentage: 0 });
         }
     };
 
@@ -430,7 +508,7 @@ const ExcelImportExport = () => {
                                     />
                                 </label>
                                 <p className="text-xs text-gray-400 mt-2">
-                                    Formato: SKU, Nombre, Marca, Proveedor_ID, Rubro, Subrubro, Stock_Total, Costo
+                                    Formato: SKU, Nombre, Marca, Proveedor_ID, Rubro, Subrubro, Stock_Total
                                 </p>
                             </div>
                         </div>
@@ -486,17 +564,12 @@ const ExcelImportExport = () => {
                                             <th className="px-4 py-2">Nombre</th>
                                             <th className="px-4 py-2">Marca</th>
                                             <th className="px-4 py-2">Stock</th>
-                                            <th className="px-4 py-2">Costo</th>
                                             <th className="px-4 py-2">Estado</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {previewData.map((item, index) => (
                                             <tr key={index} className={`${item.errors.length > 0 ? 'bg-red-900/20' : 'bg-gray-800'} border-b border-gray-700`}>
-                                                <td className="px-4 py-2">{item.rowNumber}</td>
-                                                <td className="px-4 py-2 font-mono">{item.sku}</td>
-                                                <td className="px-4 py-2">{item.name}</td>
-                                                <td className="px-4 py-2">{item.brand}</td>
                                                 <td className="px-4 py-2">{item.stock_total}</td>
                                                 <td className="px-4 py-2">
                                                     {item.errors.length === 0 ? (
@@ -586,4 +659,8 @@ const ExcelImportExport = () => {
     );
 };
 
-export default ExcelImportExport;
+export default ExcelImportExport;-2">{item.rowNumber}</td>
+                                                <td className="px-4 py-2 font-mono">{item.sku}</td>
+                                                <td className="px-4 py-2">{item.name}</td>
+                                                <td className="px-4 py-2">{item.brand}</td>
+                                                <td className="px-4 py
