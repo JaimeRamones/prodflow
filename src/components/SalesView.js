@@ -130,16 +130,14 @@ const SalesView = () => {
             let orderTotalCost = 0;
             
             const updatedOrderItems = order.order_items.map(item => {
-                const normalizedSaleSku = normalizeSku(item.sku);
-                console.log('DEBUG - Procesando item con SKU original:', item.sku);
-                console.log('DEBUG - SKU normalizado:', normalizedSaleSku);
+                console.log('DEBUG - Procesando item con SKU exacto:', item.sku);
                 
                 // Buscar el producto por SKU para imágenes
                 const productInfo = products.find(p => p.sku === item.sku);
                 
-                // Buscar el costo en supplier_stock_items usando SKU normalizado
-                const supplierInfo = supplierStockItems.find(s => s.normalized_sku === normalizedSaleSku);
-                console.log('DEBUG - SupplierInfo encontrado para', normalizedSaleSku, ':', supplierInfo);
+                // Buscar el costo en supplier_stock_items usando SKU exacto
+                const supplierInfo = supplierStockItems.find(s => s.sku === item.sku);
+                console.log('DEBUG - SupplierInfo encontrado para', item.sku, ':', supplierInfo);
                 
                 let costWithVat = 'N/A';
                 
@@ -148,19 +146,19 @@ const SalesView = () => {
                     const itemTotalCost = supplierInfo.cost_price * item.quantity;
                     orderTotalCost += itemTotalCost;
                     costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
-                    console.log('DEBUG - Costo calculado para', normalizedSaleSku, ':', costWithVat);
+                    console.log('DEBUG - Costo calculado para', item.sku, ':', costWithVat);
                     console.log('DEBUG - Costo original:', supplierInfo.cost_price, 'x', item.quantity, '=', itemTotalCost);
                 } else {
-                    console.log('DEBUG - No se encontró costo válido para SKU:', normalizedSaleSku);
+                    console.log('DEBUG - No se encontró costo válido para SKU:', item.sku);
                     if (supplierInfo) {
                         console.log('DEBUG - Supplier info existe pero cost_price es:', supplierInfo.cost_price);
                     } else {
-                        console.log('DEBUG - No existe registro en supplier_stock_items para:', normalizedSaleSku);
+                        console.log('DEBUG - No existe registro en supplier_stock_items para:', item.sku);
                         // Mostrar los primeros 5 SKUs disponibles para debug
                         if (supplierStockItems.length > 0) {
                             console.log('DEBUG - SKUs disponibles (primeros 5):');
                             supplierStockItems.slice(0, 5).forEach(s => {
-                                console.log(`  "${s.normalized_sku}"`);
+                                console.log(`  "${s.sku}"`);
                             });
                         }
                     }
