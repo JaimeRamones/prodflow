@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN FINAL MEJORADA: Costos corregidos + Estética mejorada + Rendimiento optimizado
+// VERSIÓN COMPLETA CORREGIDA: Costos desde supplier_stock_items + Imágenes sin errores + Estética mejorada
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -48,11 +48,23 @@ const SalesView = () => {
     useEffect(() => {
         const fetchSupplierStockItems = async () => {
             try {
+                console.log('DEBUG - Iniciando carga de supplier_stock_items...');
                 const { data, error } = await supabase
                     .from('supplier_stock_items')
                     .select('sku, cost_price');
                 
-                if (error) throw error;
+                if (error) {
+                    console.error('DEBUG - Error al cargar supplier_stock_items:', error);
+                    throw error;
+                }
+                console.log('DEBUG - Datos de supplier_stock_items cargados:', data);
+                console.log('DEBUG - Cantidad de items:', data?.length || 0);
+                
+                // Mostrar algunos ejemplos de SKUs
+                if (data && data.length > 0) {
+                    console.log('DEBUG - Primeros 5 SKUs encontrados:', data.slice(0, 5).map(item => item.sku));
+                }
+                
                 setSupplierStockItems(data || []);
             } catch (error) {
                 console.error('Error cargando costos de proveedor:', error);
@@ -93,81 +105,57 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
-    // Función para obtener imágenes de ML (debe estar ANTES de processedOrders)
-    const fetchItemImages = useCallback(async (itemId) => {
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return [];
-            
-            const { data, error } = await supabase.functions.invoke('get-meli-item-details', {
-                body: { item_id: itemId }
-            });
-            
-            if (error) throw error;
-            return data.pictures?.map(pic => pic.secure_url) || [];
-        } catch (error) {
-            console.error('Error fetching item images:', error);
-            return [];
-        }
-    }, []);
-
     // Procesar órdenes con cálculos de costos desde supplier_stock_items
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
+        
+        console.log('DEBUG - Procesando órdenes. Total supplier items:', supplierStockItems.length);
         
         return salesOrders.map(order => {
             let orderTotalCost = 0;
             
             const updatedOrderItems = order.order_items.map(item => {
-                console.log('DEBUG - Procesando item:', item.sku);
+                console.log('DEBUG - Procesando item con SKU:', item.sku);
                 
                 // Buscar el producto por SKU para imágenes
                 const productInfo = products.find(p => p.sku === item.sku);
-                console.log('DEBUG - ProductInfo encontrado:', productInfo);
                 
                 // Buscar el costo en supplier_stock_items
                 const supplierInfo = supplierStockItems.find(s => s.sku === item.sku);
-                console.log('DEBUG - SupplierInfo encontrado:', supplierInfo);
+                console.log('DEBUG - SupplierInfo encontrado para', item.sku, ':', supplierInfo);
                 
                 let costWithVat = 'N/A';
                 
                 // Calcular costo con IVA si existe en supplier_stock_items
-                if (supplierInfo && supplierInfo.cost_price) {
+                if (supplierInfo && supplierInfo.cost_price && supplierInfo.cost_price > 0) {
                     const itemTotalCost = supplierInfo.cost_price * item.quantity;
                     orderTotalCost += itemTotalCost;
                     costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
-                    console.log('DEBUG - Costo calculado:', costWithVat);
+                    console.log('DEBUG - Costo calculado para', item.sku, ':', costWithVat);
                 } else {
-                    console.log('DEBUG - No se encontró costo para SKU:', item.sku);
+                    console.log('DEBUG - No se encontró costo válido para SKU:', item.sku);
+                    if (supplierInfo) {
+                        console.log('DEBUG - Supplier info existe pero cost_price es:', supplierInfo.cost_price);
+                    }
                 }
                 
-                // Manejar imágenes con múltiples fuentes
+                // Manejar imágenes de forma segura
                 let images = [];
                 
-                // 1. Imágenes del producto en base de datos
-                if (productInfo?.image_urls && Array.isArray(productInfo.image_urls) && productInfo.image_urls.length > 0) {
-                    const productImages = productInfo.image_urls
-                        .filter(url => url && url.trim() !== '')
-                        .map(url => url.replace(/^http:/, 'https:'));
-                    images.push(...productImages);
-                    console.log('DEBUG - Imágenes del producto:', productImages);
-                }
-                
-                // 2. Thumbnail de la orden
+                // 1. Thumbnail de la orden (más confiable)
                 if (item.thumbnail_url) {
                     const secureThumbnail = item.thumbnail_url.replace(/^http:/, 'https:');
-                    if (!images.includes(secureThumbnail)) {
-                        images.unshift(secureThumbnail);
-                    }
-                    console.log('DEBUG - Thumbnail agregado:', secureThumbnail);
+                    images.push(secureThumbnail);
                 }
                 
-                // 3. Placeholder si no hay imágenes (usando un placeholder que funcione)
-                if (images.length === 0) {
-                    images.push('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgdmlld0JveD0iMCAwIDE1MCAxNTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxNTAiIGhlaWdodD0iMTUwIiBmaWxsPSIjMzc0MTUxIi8+CjxwYXRoIGQ9Ik03NSA0MEg2MEwzNSA2NVYxMTBIMTE1VjY1TDkwIDQwSDc1WiIgZmlsbD0iIzZCNzI4MCIvPgo8cGF0aCBkPSJNNjAgODBMMzUgMTA1VjExMEg2MFY4MFoiIGZpbGw9IiM5Q0E0QUYiLz4KPHN2Zz4K');
+                // 2. Imágenes del producto en base de datos
+                if (productInfo?.image_urls && Array.isArray(productInfo.image_urls)) {
+                    const productImages = productInfo.image_urls
+                        .filter(url => url && url.trim() !== '')
+                        .map(url => url.replace(/^http:/, 'https:'))
+                        .filter(url => !images.includes(url)); // Evitar duplicados
+                    images.push(...productImages);
                 }
-                
-                console.log('DEBUG - Imágenes finales:', images);
                 
                 return {
                     ...item,
@@ -610,25 +598,34 @@ const SalesView = () => {
                             </div>
                             
                             {/* Items de la orden */}
-                           <div className="flex-shrink-0">
-    {item.images && item.images.length > 0 && item.images[0] ? (
-        <img 
-            src={item.images[0]} 
-            alt={item.title} 
-            className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
-            onClick={() => setZoomedImageUrl(item.images[0])}
-            onError={(e) => {
-                e.target.style.display = 'none';
-            }}
-        />
-    ) : (
-        <div className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center">
-            <svg className="w-8 h-8 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-            </svg>
-        </div>
-    )}
-</div>
+                            <div className="p-4">
+                                {order.order_items.map((item, index) => (
+                                    <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 mb-2">
+                                        {/* Imagen del producto corregida */}
+                                        <div className="flex-shrink-0">
+                                            {item.images && item.images.length > 0 ? (
+                                                <img 
+                                                    src={item.images[0]} 
+                                                    alt={item.title} 
+                                                    className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
+                                                    onClick={() => setZoomedImageUrl(item.images[0])}
+                                                    onError={(e) => {
+                                                        e.target.style.display = 'none';
+                                                        e.target.nextSibling.style.display = 'flex';
+                                                    }}
+                                                />
+                                            ) : null}
+                                            {/* Placeholder cuando no hay imagen */}
+                                            <div 
+                                                className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center" 
+                                                style={{display: item.images && item.images.length > 0 ? 'none' : 'flex'}}
+                                            >
+                                                <svg className="w-8 h-8 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+                                                </svg>
+                                            </div>
+                                        </div>
+                                        
                                         <div className="flex-grow">
                                             <p className="font-semibold text-white leading-tight">
                                                 {item.title}
