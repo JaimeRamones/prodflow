@@ -46,7 +46,7 @@ const SUPPLIERS: SupplierConfig[] = [
         sheet_name: 'LISTAS DE PRECIOS CON STOCK',
         parsing_logic: 'excel_ventor',
         separator: 'tab',
-        batch_size: 3500,
+        batch_size: 3000,
         active: true
     }
 ]
