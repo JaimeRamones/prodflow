@@ -12,6 +12,43 @@ const SupplierOrdersTable = () => {
     const [hideInvoiced, setHideInvoiced] = useState(false);
     const [purchaseOrderData, setPurchaseOrderData] = useState(null);
 
+    // TODOS LOS HOOKS DEBEN IR AQUÍ AL PRINCIPIO
+
+    // Estadísticas para mostrar
+    const stats = useMemo(() => {
+        if (!supplierOrders) return { total: 0, auto: 0, manual: 0, pending: 0, invoiced: 0 };
+        
+        return {
+            total: supplierOrders.length,
+            auto: supplierOrders.filter(o => o.created_from_sale_id).length,
+            manual: supplierOrders.filter(o => !o.created_from_sale_id).length,
+            pending: supplierOrders.filter(o => o.status !== 'Facturado').length,
+            invoiced: supplierOrders.filter(o => o.status === 'Facturado').length
+        };
+    }, [supplierOrders]);
+
+    // LÓGICA DE FILTRADO
+    const filteredOrders = useMemo(() => {
+        if (!supplierOrders) return [];
+        return supplierOrders.filter(order => {
+            const matchesSupplier = !supplierFilter || order.supplier_id === parseInt(supplierFilter, 10);
+            const matchesInvoiced = !hideInvoiced || order.status !== 'Facturado';
+            const matchesSaleType = !saleTypeFilter || order.sale_type === saleTypeFilter;
+            
+            // NUEVO: filtro por origen
+            const matchesOrigin = !originFilter || 
+                (originFilter === 'auto' && order.created_from_sale_id) ||
+                (originFilter === 'manual' && !order.created_from_sale_id);
+            
+            return matchesSupplier && matchesInvoiced && matchesSaleType && matchesOrigin;
+        });
+    }, [supplierOrders, supplierFilter, hideInvoiced, saleTypeFilter, originFilter]);
+    
+    // Efecto para limpiar la selección si los filtros cambian
+    useEffect(() => {
+        setSelectedOrders([]);
+    }, [supplierFilter, saleTypeFilter, hideInvoiced, originFilter]);
+
     // NUEVA función para obtener chip de origen
     const getOriginChip = (order) => {
         if (order.created_from_sale_id) {
@@ -34,28 +71,7 @@ const SupplierOrdersTable = () => {
         );
     };
 
-    // LÓGICA DE FILTRADO MEJORADA
-    const filteredOrders = useMemo(() => {
-        if (!supplierOrders) return [];
-        return supplierOrders.filter(order => {
-            const matchesSupplier = !supplierFilter || order.supplier_id === parseInt(supplierFilter, 10);
-            const matchesInvoiced = !hideInvoiced || order.status !== 'Facturado';
-            const matchesSaleType = !saleTypeFilter || order.sale_type === saleTypeFilter;
-            
-            // NUEVO: filtro por origen
-            const matchesOrigin = !originFilter || 
-                (originFilter === 'auto' && order.created_from_sale_id) ||
-                (originFilter === 'manual' && !order.created_from_sale_id);
-            
-            return matchesSupplier && matchesInvoiced && matchesSaleType && matchesOrigin;
-        });
-    }, [supplierOrders, supplierFilter, hideInvoiced, saleTypeFilter, originFilter]);
-    
-    // Efecto para limpiar la selección si los filtros cambian
-    useEffect(() => {
-        setSelectedOrders([]);
-    }, [supplierFilter, saleTypeFilter, hideInvoiced, originFilter]);
-
+    // AHORA SÍ PUEDEN IR LOS RETURNS CONDICIONALES
     if (!supplierOrders || !suppliers) {
         return (
             <div className="bg-gray-800 border border-gray-700 p-6 rounded-lg shadow-md mt-8">
@@ -139,23 +155,10 @@ const SupplierOrdersTable = () => {
         });
     };
 
-    // NUEVAS estadísticas para mostrar
-    const stats = useMemo(() => {
-        if (!supplierOrders) return { total: 0, auto: 0, manual: 0, pending: 0, invoiced: 0 };
-        
-        return {
-            total: supplierOrders.length,
-            auto: supplierOrders.filter(o => o.created_from_sale_id).length,
-            manual: supplierOrders.filter(o => !o.created_from_sale_id).length,
-            pending: supplierOrders.filter(o => o.status !== 'Facturado').length,
-            invoiced: supplierOrders.filter(o => o.status === 'Facturado').length
-        };
-    }, [supplierOrders]);
-
     return (
         <>
             <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg shadow-md mt-8">
-                {/* NUEVO: Header con estadísticas */}
+                {/* Header con estadísticas */}
                 <div className="mb-6">
                     <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
                         Pedidos a Proveedor 
@@ -214,7 +217,7 @@ const SupplierOrdersTable = () => {
                         </select>
                     </div>
 
-                    {/* NUEVO: Filtro por origen */}
+                    {/* Filtro por origen */}
                     <div className="flex-1 w-full">
                         <label className="block text-sm font-medium text-gray-300 mb-1">Filtrar por Origen:</label>
                         <select 
@@ -262,7 +265,7 @@ const SupplierOrdersTable = () => {
                                 <th className="px-4 py-3">SKU</th>
                                 <th className="px-4 py-3">Cant.</th>
                                 <th className="px-4 py-3">Proveedor</th>
-                                <th className="px-4 py-3">Origen</th> {/* NUEVA columna */}
+                                <th className="px-4 py-3">Origen</th>
                                 <th className="px-4 py-3">Fecha</th>
                                 <th className="px-4 py-3">Estado</th>
                                 <th className="px-4 py-3 text-center">Acción</th>
@@ -295,7 +298,7 @@ const SupplierOrdersTable = () => {
                                         </select>
                                     </td>
 
-                                    {/* NUEVA columna de origen */}
+                                    {/* Columna de origen */}
                                     <td className="px-4 py-3">
                                         {getOriginChip(order)}
                                         {order.created_from_sale_id && (
