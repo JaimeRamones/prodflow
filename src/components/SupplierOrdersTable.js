@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect, useMemo } from 'react'; // <-- CORRECCIÓN AQUÍ
+import React, { useState, useContext, useEffect, useMemo } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import PurchaseOrderModal from './PurchaseOrderModal';
@@ -7,26 +7,54 @@ const SupplierOrdersTable = () => {
     const { showMessage, session, supplierOrders, suppliers, fetchSupplierOrders, fetchPurchaseOrders } = useContext(AppContext);
     const [supplierFilter, setSupplierFilter] = useState('');
     const [saleTypeFilter, setSaleTypeFilter] = useState('');
+    const [originFilter, setOriginFilter] = useState(''); // NUEVO: filtro por origen
     const [selectedOrders, setSelectedOrders] = useState([]);
     const [hideInvoiced, setHideInvoiced] = useState(false);
     const [purchaseOrderData, setPurchaseOrderData] = useState(null);
 
-    // --- LÓGICA DE FILTRADO ---
+    // NUEVA función para obtener chip de origen
+    const getOriginChip = (order) => {
+        if (order.created_from_sale_id) {
+            return (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+                    </svg>
+                    Auto (Venta #{order.sale_order_id})
+                </span>
+            );
+        }
+        return (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-500/20 text-gray-300 border border-gray-500/30">
+                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                </svg>
+                Manual
+            </span>
+        );
+    };
+
+    // LÓGICA DE FILTRADO MEJORADA
     const filteredOrders = useMemo(() => {
         if (!supplierOrders) return [];
         return supplierOrders.filter(order => {
             const matchesSupplier = !supplierFilter || order.supplier_id === parseInt(supplierFilter, 10);
             const matchesInvoiced = !hideInvoiced || order.status !== 'Facturado';
             const matchesSaleType = !saleTypeFilter || order.sale_type === saleTypeFilter;
-            return matchesSupplier && matchesInvoiced && matchesSaleType;
+            
+            // NUEVO: filtro por origen
+            const matchesOrigin = !originFilter || 
+                (originFilter === 'auto' && order.created_from_sale_id) ||
+                (originFilter === 'manual' && !order.created_from_sale_id);
+            
+            return matchesSupplier && matchesInvoiced && matchesSaleType && matchesOrigin;
         });
-    }, [supplierOrders, supplierFilter, hideInvoiced, saleTypeFilter]);
+    }, [supplierOrders, supplierFilter, hideInvoiced, saleTypeFilter, originFilter]);
     
     // Efecto para limpiar la selección si los filtros cambian
     useEffect(() => {
         setSelectedOrders([]);
-    }, [supplierFilter, saleTypeFilter, hideInvoiced]);
-
+    }, [supplierFilter, saleTypeFilter, hideInvoiced, originFilter]);
 
     if (!supplierOrders || !suppliers) {
         return (
@@ -43,13 +71,10 @@ const SupplierOrdersTable = () => {
         );
     };
 
-    // --- NUEVA FUNCIÓN: Para seleccionar/deseleccionar todos los pedidos filtrados ---
     const handleSelectAll = () => {
         if (selectedOrders.length === filteredOrders.length) {
-            // Si ya están todos seleccionados, deseleccionar todos
             setSelectedOrders([]);
         } else {
-            // Si no, seleccionar todos los que están visibles
             setSelectedOrders(filteredOrders.map(order => order.id));
         }
     };
@@ -114,13 +139,55 @@ const SupplierOrdersTable = () => {
         });
     };
 
+    // NUEVAS estadísticas para mostrar
+    const stats = useMemo(() => {
+        if (!supplierOrders) return { total: 0, auto: 0, manual: 0, pending: 0, invoiced: 0 };
+        
+        return {
+            total: supplierOrders.length,
+            auto: supplierOrders.filter(o => o.created_from_sale_id).length,
+            manual: supplierOrders.filter(o => !o.created_from_sale_id).length,
+            pending: supplierOrders.filter(o => o.status !== 'Facturado').length,
+            invoiced: supplierOrders.filter(o => o.status === 'Facturado').length
+        };
+    }, [supplierOrders]);
+
     return (
         <>
             <div className="bg-gray-800 border border-gray-700 p-4 rounded-lg shadow-md mt-8">
-                <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-                    Pedidos a Proveedor <span className="ml-2 text-base font-normal text-gray-400">({filteredOrders.length})</span>
-                </h3>
+                {/* NUEVO: Header con estadísticas */}
+                <div className="mb-6">
+                    <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
+                        Pedidos a Proveedor 
+                        <span className="ml-2 text-base font-normal text-gray-400">({filteredOrders.length} de {stats.total})</span>
+                    </h3>
+                    
+                    {/* Estadísticas rápidas */}
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                        <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <div className="text-2xl font-bold text-blue-400">{stats.auto}</div>
+                            <div className="text-xs text-gray-400">Automáticos</div>
+                        </div>
+                        <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <div className="text-2xl font-bold text-gray-400">{stats.manual}</div>
+                            <div className="text-xs text-gray-400">Manuales</div>
+                        </div>
+                        <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <div className="text-2xl font-bold text-yellow-400">{stats.pending}</div>
+                            <div className="text-xs text-gray-400">Pendientes</div>
+                        </div>
+                        <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <div className="text-2xl font-bold text-green-400">{stats.invoiced}</div>
+                            <div className="text-xs text-gray-400">Facturados</div>
+                        </div>
+                        <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <div className="text-2xl font-bold text-white">{stats.total}</div>
+                            <div className="text-xs text-gray-400">Total</div>
+                        </div>
+                    </div>
+                </div>
                 
+                {/* Filtros mejorados */}
                 <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-4 p-4 bg-gray-900/50 rounded-lg">
                     <div className="flex-1 w-full">
                         <label className="block text-sm font-medium text-gray-300 mb-1">Filtrar por Proveedor:</label>
@@ -147,6 +214,20 @@ const SupplierOrdersTable = () => {
                         </select>
                     </div>
 
+                    {/* NUEVO: Filtro por origen */}
+                    <div className="flex-1 w-full">
+                        <label className="block text-sm font-medium text-gray-300 mb-1">Filtrar por Origen:</label>
+                        <select 
+                            className="w-full p-2 border rounded-lg bg-gray-700 border-gray-600 text-white text-sm" 
+                            value={originFilter} 
+                            onChange={(e) => setOriginFilter(e.target.value)}
+                        >
+                            <option value="">Todos los Orígenes</option>
+                            <option value="auto">Automáticos (de ventas)</option>
+                            <option value="manual">Manuales</option>
+                        </select>
+                    </div>
+
                     <div className="flex items-center space-x-4 pt-6">
                         <label className="flex items-center text-sm font-medium text-gray-300">
                             <input type="checkbox" className="h-4 w-4 rounded bg-gray-700 border-gray-600 text-blue-500" checked={hideInvoiced} onChange={(e) => setHideInvoiced(e.target.checked)} />
@@ -170,19 +251,18 @@ const SupplierOrdersTable = () => {
                     <table className="w-full text-sm text-left text-gray-400">
                         <thead className="text-xs text-gray-300 uppercase bg-gray-700">
                             <tr>
-                                {/* --- CHECKBOX PARA SELECCIONAR TODOS --- */}
                                 <th className="p-2 text-center">
                                     <input 
                                         type="checkbox" 
                                         className="h-4 w-4 rounded bg-gray-700 border-gray-600 text-blue-500"
                                         onChange={handleSelectAll}
-                                        // Se marca si el número de seleccionados es igual al de filtrados (y hay al menos uno)
                                         checked={filteredOrders.length > 0 && selectedOrders.length === filteredOrders.length}
                                     />
                                 </th>
                                 <th className="px-4 py-3">SKU</th>
                                 <th className="px-4 py-3">Cant.</th>
                                 <th className="px-4 py-3">Proveedor</th>
+                                <th className="px-4 py-3">Origen</th> {/* NUEVA columna */}
                                 <th className="px-4 py-3">Fecha</th>
                                 <th className="px-4 py-3">Estado</th>
                                 <th className="px-4 py-3 text-center">Acción</th>
@@ -192,7 +272,14 @@ const SupplierOrdersTable = () => {
                             {filteredOrders.map(order => (
                                 <tr key={order.id} className={order.status === 'Facturado' ? 'bg-green-900/20' : 'hover:bg-gray-700/50'}>
                                     <td className="p-2 text-center">
-                                        {order.status !== 'Facturado' && <input type="checkbox" className="h-4 w-4 rounded bg-gray-700 border-gray-600 text-blue-500" checked={selectedOrders.includes(order.id)} onChange={() => handleSelectOrder(order.id)} />}
+                                        {order.status !== 'Facturado' && 
+                                            <input 
+                                                type="checkbox" 
+                                                className="h-4 w-4 rounded bg-gray-700 border-gray-600 text-blue-500" 
+                                                checked={selectedOrders.includes(order.id)} 
+                                                onChange={() => handleSelectOrder(order.id)} 
+                                            />
+                                        }
                                     </td>
                                     <td className="px-4 py-3 font-medium text-white">{order.sku}</td>
                                     <td className="px-4 py-3">{order.quantity_to_order}</td>
@@ -208,9 +295,22 @@ const SupplierOrdersTable = () => {
                                         </select>
                                     </td>
 
+                                    {/* NUEVA columna de origen */}
+                                    <td className="px-4 py-3">
+                                        {getOriginChip(order)}
+                                        {order.created_from_sale_id && (
+                                            <div className="text-xs text-gray-400 mt-1">
+                                                Sale ID: {order.sale_order_id}
+                                            </div>
+                                        )}
+                                    </td>
+
                                     <td className="px-4 py-3">{new Date(order.created_at).toLocaleDateString('es-AR')}</td>
                                     <td className="px-4 py-3">
-                                        {order.status === 'Facturado' ? (<span className="px-2 inline-flex text-xs font-semibold rounded-full bg-green-900/50 text-green-300">Facturado</span>) : (<span className="px-2 inline-flex text-xs font-semibold rounded-full bg-yellow-900/50 text-yellow-300">Pendiente</span>)}
+                                        {order.status === 'Facturado' ? 
+                                            <span className="px-2 inline-flex text-xs font-semibold rounded-full bg-green-900/50 text-green-300">Facturado</span> : 
+                                            <span className="px-2 inline-flex text-xs font-semibold rounded-full bg-yellow-900/50 text-yellow-300">Pendiente</span>
+                                        }
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <button onClick={() => handleMarkAsDone(order.id)} className="px-3 py-1 bg-blue-600 text-white text-sm font-semibold rounded-md shadow-sm hover:bg-blue-700">Realizado</button>
