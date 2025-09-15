@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN COMPLETA con Smart Processing y indicadores de origen
+// VERSIÓN COMPLETA con Smart Processing y indicadores de origen - SIN ERRORES
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -39,7 +39,7 @@ const SalesView = () => {
     const [expandedOrders, setExpandedOrders] = useState(new Set());
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
-    const [supplierStockItems, setSupplierStockItems] = useState([]);
+    const [syncCacheItems, setSyncCacheItems] = useState([]);
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
@@ -79,36 +79,48 @@ const SalesView = () => {
         }
     };
 
-    // Cargar datos de supplier_stock_items para obtener costos del proveedor
+    // Función para normalizar SKUs - remueve espacios extra y normaliza formato
+    const normalizeSku = (sku) => {
+        if (!sku) return '';
+        return sku.toString().trim().replace(/\s+/g, ' ').toUpperCase();
+    };
+
+    // Cargar datos de sync_cache para obtener costos calculados
     useEffect(() => {
-        const fetchSupplierStockItems = async () => {
+        const fetchSyncCacheItems = async () => {
             try {
-                console.log('DEBUG - Iniciando carga de supplier_stock_items...');
+                console.log('DEBUG - Iniciando carga de sync_cache...');
                 const { data, error } = await supabase
-                    .from('supplier_stock_items')
-                    .select('sku, cost_price');
+                    .from('sync_cache')
+                    .select('meli_sku, calculated_cost');
                 
                 if (error) {
-                    console.error('DEBUG - Error al cargar supplier_stock_items:', error);
+                    console.error('DEBUG - Error al cargar sync_cache:', error);
                     throw error;
                 }
-                console.log('DEBUG - Datos de supplier_stock_items cargados:', data);
+                console.log('DEBUG - Datos de sync_cache cargados:', data);
                 console.log('DEBUG - Cantidad de items:', data?.length || 0);
                 
-                if (data && data.length > 0) {
-                    console.log('DEBUG - Primeros 5 SKUs encontrados:');
-                    data.slice(0, 5).forEach(item => {
-                        console.log(`  SKU: "${item.sku}" -> Precio: ${item.cost_price}`);
+                // Normalizar SKUs y mostrar algunos ejemplos
+                const normalizedData = data?.map(item => ({
+                    ...item,
+                    normalized_sku: normalizeSku(item.meli_sku)
+                })) || [];
+                
+                if (normalizedData.length > 0) {
+                    console.log('DEBUG - Primeros 5 SKUs encontrados (normalizados):');
+                    normalizedData.slice(0, 5).forEach(item => {
+                        console.log(`  Original: "${item.meli_sku}" -> Normalizado: "${item.normalized_sku}" -> Costo: ${item.calculated_cost}`);
                     });
                 }
                 
-                setSupplierStockItems(data || []);
+                setSyncCacheItems(normalizedData);
             } catch (error) {
-                console.error('Error cargando costos de proveedor:', error);
+                console.error('Error cargando costos desde sync_cache:', error);
             }
         };
 
-        fetchSupplierStockItems();
+        fetchSyncCacheItems();
     }, []);
 
     // Función de sincronización automática
@@ -142,44 +154,45 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
-    // Procesar órdenes con cálculos de costos desde supplier_stock_items
+    // Procesar órdenes con cálculos de costos desde sync_cache
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         
-        console.log('DEBUG - Procesando órdenes. Total supplier items:', supplierStockItems.length);
+        console.log('DEBUG - Procesando órdenes. Total sync_cache items:', syncCacheItems.length);
         
         return salesOrders.map(order => {
             let orderTotalCost = 0;
             
             const updatedOrderItems = order.order_items.map(item => {
-                console.log('DEBUG - Procesando item con SKU exacto:', item.sku);
+                const normalizedItemSku = normalizeSku(item.sku);
+                console.log('DEBUG - Procesando item con SKU normalizado:', normalizedItemSku);
                 
                 // Buscar el producto por SKU para imágenes
-                const productInfo = products.find(p => p.sku === item.sku);
+                const productInfo = products.find(p => normalizeSku(p.sku) === normalizedItemSku);
                 
-                // Buscar el costo en supplier_stock_items usando SKU exacto
-                const supplierInfo = supplierStockItems.find(s => s.sku === item.sku);
-                console.log('DEBUG - SupplierInfo encontrado para', item.sku, ':', supplierInfo);
+                // Buscar el costo en sync_cache usando SKU normalizado
+                const syncCacheInfo = syncCacheItems.find(s => s.normalized_sku === normalizedItemSku);
+                console.log('DEBUG - SyncCacheInfo encontrado para', normalizedItemSku, ':', syncCacheInfo);
                 
                 let costWithVat = 'N/A';
                 
-                // Calcular costo con IVA si existe en supplier_stock_items
-                if (supplierInfo && supplierInfo.cost_price && supplierInfo.cost_price > 0) {
-                    const itemTotalCost = supplierInfo.cost_price * item.quantity;
+                // Calcular costo con IVA si existe en sync_cache
+                if (syncCacheInfo && syncCacheInfo.calculated_cost && syncCacheInfo.calculated_cost > 0) {
+                    const itemTotalCost = syncCacheInfo.calculated_cost * item.quantity;
                     orderTotalCost += itemTotalCost;
-                    costWithVat = (supplierInfo.cost_price * 1.21).toFixed(2);
-                    console.log('DEBUG - Costo calculado para', item.sku, ':', costWithVat);
-                    console.log('DEBUG - Costo original:', supplierInfo.cost_price, 'x', item.quantity, '=', itemTotalCost);
+                    costWithVat = (syncCacheInfo.calculated_cost * 1.21).toFixed(2);
+                    console.log('DEBUG - Costo calculado para', normalizedItemSku, ':', costWithVat);
+                    console.log('DEBUG - Costo original:', syncCacheInfo.calculated_cost, 'x', item.quantity, '=', itemTotalCost);
                 } else {
-                    console.log('DEBUG - No se encontró costo válido para SKU:', item.sku);
-                    if (supplierInfo) {
-                        console.log('DEBUG - Supplier info existe pero cost_price es:', supplierInfo.cost_price);
+                    console.log('DEBUG - No se encontró costo válido para SKU:', normalizedItemSku);
+                    if (syncCacheInfo) {
+                        console.log('DEBUG - Sync cache info existe pero calculated_cost es:', syncCacheInfo.calculated_cost);
                     } else {
-                        console.log('DEBUG - No existe registro en supplier_stock_items para:', item.sku);
-                        if (supplierStockItems.length > 0) {
+                        console.log('DEBUG - No existe registro en sync_cache para:', normalizedItemSku);
+                        if (syncCacheItems.length > 0) {
                             console.log('DEBUG - SKUs disponibles (primeros 5):');
-                            supplierStockItems.slice(0, 5).forEach(s => {
-                                console.log(`  "${s.sku}"`);
+                            syncCacheItems.slice(0, 5).forEach(s => {
+                                console.log(`  "${s.normalized_sku}"`);
                             });
                         }
                     }
@@ -220,7 +233,7 @@ const SalesView = () => {
                 total_cost_with_vat: totalCostWithVat
             };
         });
-    }, [salesOrders, products, supplierStockItems]);
+    }, [salesOrders, products, syncCacheItems]);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
@@ -526,6 +539,25 @@ const SalesView = () => {
                             <select 
                                 value={filters.shippingType} 
                                 onChange={e => setFilters({...filters, shippingType: e.target.value})} 
+                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
+                            >
+                                <option value="all">🚚 Todos los Envíos</option>
+                                <option value="flex">⚡ Flex</option>
+                                <option value="mercado_envios">📦 Mercado Envíos</option>
+                            </select>
+                        </div>
+                        
+                        {/* Filtro de Estado */}
+                        <div className="group">
+                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
+                                <svg className="w-4 h-4 text-gray-400 group-hover:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span>Estado</span>
+                            </label>
+                            <select 
+                                value={filters.status} 
+                                onChange={e => setFilters({...filters, status: e.target.value})} 
                                 className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 transition-all duration-200"
                             >
                                 <option value="all">📋 Todos los Estados</option>
@@ -612,161 +644,170 @@ const SalesView = () => {
                 {isLoading ? ( 
                     <p className="text-center p-8 text-gray-400">Cargando...</p> 
                 ) : ( 
-                    paginatedOrders.length > 0 ? paginatedOrders.map(order => (
-                        <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
-                            {/* Header de la orden */}
-                            <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
-                                <div className="flex items-center gap-4">
-                                    <input 
-                                        type="checkbox" 
-                                        checked={selectedOrders.has(order.id)} 
-                                        onChange={() => handleSelectOrder(order.id)} 
-                                        className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" 
-                                    />
-                                    <div>
-                                        <p className="text-sm font-semibold text-blue-400">
-                                            Venta #{order.meli_order_id}
-                                        </p>
-                                        <p className="text-lg font-bold text-white">
-                                            {order.buyer_name || 'Comprador Desconocido'}
-                                        </p>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <p className="text-xs text-gray-400">
-                                                {formatDate(order.created_at)}
+                    paginatedOrders.length > 0 ? paginatedOrders.map(order => {
+                        // Determinar el tipo de origen de la orden
+                        const orderSourceTypes = order.order_items.map(item => 
+                            item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                        );
+                        const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                        const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
+
+                        return (
+                            <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
+                                {/* Header de la orden */}
+                                <div className="p-4 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-gray-700">
+                                    <div className="flex items-center gap-4">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={selectedOrders.has(order.id)} 
+                                            onChange={() => handleSelectOrder(order.id)} 
+                                            className="w-5 h-5 flex-shrink-0 bg-gray-700 border border-gray-600 rounded" 
+                                        />
+                                        <div>
+                                            <p className="text-sm font-semibold text-blue-400">
+                                                Venta #{order.meli_order_id}
                                             </p>
-                                            {/* NUEVO: Chip de origen a nivel de orden */}
-                                            {getSourceChip(order.source_type)}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex-shrink-0 text-right">
-                                    <p className="text-xl font-bold text-white">
-                                        {formatCurrency(order.total_amount)}
-                                    </p>
-                                    <div className="flex items-center justify-end gap-2 mt-1">
-                                        {order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            {/* Items de la orden */}
-                            <div className="p-4">
-                                {order.order_items.map((item, index) => (
-                                    <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 mb-2">
-                                        {/* Imagen del producto */}
-                                        <div className="flex-shrink-0">
-                                            {item.images && item.images.length > 0 ? (
-                                                <img 
-                                                    src={item.images[0]} 
-                                                    alt={item.title} 
-                                                    className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
-                                                    onClick={() => setZoomedImageUrl(item.images[0])}
-                                                    onError={(e) => {
-                                                        e.target.style.display = 'none';
-                                                        e.target.nextSibling.style.display = 'flex';
-                                                    }}
-                                                />
-                                            ) : null}
-                                            <div 
-                                                className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center" 
-                                                style={{display: item.images && item.images.length > 0 ? 'none' : 'flex'}}
-                                            >
-                                                <svg className="w-8 h-8 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-                                                </svg>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="flex-grow">
-                                            <p className="font-semibold text-white leading-tight">
-                                                {item.title}
+                                            <p className="text-lg font-bold text-white">
+                                                {order.buyer_name || 'Comprador Desconocido'}
                                             </p>
                                             <div className="flex items-center gap-2 mt-1">
-                                                <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
-                                                    SKU: {item.sku || 'N/A'}
+                                                <p className="text-xs text-gray-400">
+                                                    {formatDate(order.created_at)}
                                                 </p>
-                                                {/* NUEVO: Mostrar origen del item */}
-                                                {item.assigned_supplier_id ? (
-                                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
-                                                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                            <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
-                                                        </svg>
-                                                        Proveedor
-                                                    </span>
-                                                ) : (
-                                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
-                                                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                            <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
-                                                        </svg>
-                                                        Stock Propio
-                                                    </span>
-                                                )}
+                                                {/* Chip de origen a nivel de orden */}
+                                                {getSourceChip(orderSourceType)}
                                             </div>
                                         </div>
-                                        
-                                        <div className="text-right flex-shrink-0 w-48">
-                                            <p className="text-white font-semibold">
-                                                {item.quantity} x {formatCurrency(item.unit_price)}
-                                            </p>
-                                            <p className="text-xs text-yellow-400 mt-1">
-                                                Costo c/IVA: {formatCurrency(item.cost_with_vat)}
-                                            </p>
+                                    </div>
+                                    <div className="flex-shrink-0 text-right">
+                                        <p className="text-xl font-bold text-white">
+                                            {formatCurrency(order.total_amount)}
+                                        </p>
+                                        <div className="flex items-center justify-end gap-2 mt-1">
+                                            {order.shipping_type === 'flex' ? <FlexIcon /> : <ShippingIcon />}
                                         </div>
                                     </div>
-                                ))}
-                                
-                                {/* Desglose detallado (plegable) */}
-                                {expandedOrders.has(order.id) && (
-                                    <div className="border-t border-gray-700 mt-2 pt-2">
-                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                                            <span className="text-gray-400">Cobro total de la venta:</span>
-                                            <span className="text-white text-right font-mono">{formatCurrency(order.total_amount)}</span>
-                                            
-                                            <span className="text-gray-400">Costo de tu envío:</span>
-                                            <span className="text-white text-right font-mono">{formatCurrency(order.shipping_cost)}</span>
-                                            
-                                            <span className="text-red-400">Cargo por Venta:</span>
-                                            <span className="text-red-400 text-right font-mono">- {formatCurrency(order.sale_fee)}</span>
-                                            
-                                            <span className="text-red-400">Impuestos y percepciones:</span>
-                                            <span className="text-red-400 text-right font-mono">- {formatCurrency(order.taxes_amount)}</span>
-                                            
-                                            <span className="text-green-400 font-bold border-t border-gray-600 mt-1 pt-1">Recibes:</span>
-                                            <span className="text-green-400 text-right font-bold font-mono border-t border-gray-600 mt-1 pt-1">{formatCurrency(order.net_received_amount)}</span>
-                                            
-                                            <span className="text-yellow-400 font-bold">Costo Total Productos c/IVA:</span>
-                                            <span className="text-yellow-400 text-right font-bold font-mono">{formatCurrency(order.total_cost_with_vat)}</span>
-                                            
-                                            <span className="text-cyan-300 font-bold text-lg border-t-2 border-cyan-700 mt-1 pt-1">Ganancia:</span>
-                                            <span className="text-cyan-300 text-right font-bold font-mono text-lg border-t-2 border-cyan-700 mt-1 pt-1">{formatCurrency(order.net_received_amount - order.total_cost_with_vat)}</span>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                            
-                            {/* Footer con acciones */}
-                            <div className="p-4 bg-gray-800 border-t border-gray-700 flex justify-between items-center">
-                                <div>
-                                    {getStatusChip(order.status)}
-                                    <button 
-                                        onClick={() => toggleOrderDetails(order.id)} 
-                                        className="ml-4 px-3 py-1 text-xs text-gray-300 bg-gray-700 rounded-full hover:bg-gray-600"
-                                    >
-                                        {expandedOrders.has(order.id) ? 'Ocultar Detalle' : 'Ver Detalle'}
-                                    </button>
                                 </div>
-                                {order.status === 'Recibido' && (
-                                    <button 
-                                        onClick={() => handleProcessOrder(order.id)} 
-                                        disabled={isProcessing === order.id} 
-                                        className="px-5 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600"
-                                    >
-                                        {isProcessing === order.id ? 'Procesando...' : 'Procesar Pedido'}
-                                    </button>
-                                )}
+                                
+                                {/* Items de la orden */}
+                                <div className="p-4">
+                                    {order.order_items.map((item, index) => (
+                                        <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 mb-2">
+                                            {/* Imagen del producto */}
+                                            <div className="flex-shrink-0">
+                                                {item.images && item.images.length > 0 ? (
+                                                    <img 
+                                                        src={item.images[0]} 
+                                                        alt={item.title} 
+                                                        className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
+                                                        onClick={() => setZoomedImageUrl(item.images[0])}
+                                                        onError={(e) => {
+                                                            e.target.style.display = 'none';
+                                                            e.target.nextSibling.style.display = 'flex';
+                                                        }}
+                                                    />
+                                                ) : null}
+                                                <div 
+                                                    className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center" 
+                                                    style={{display: item.images && item.images.length > 0 ? 'none' : 'flex'}}
+                                                >
+                                                    <svg className="w-8 h-8 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex-grow">
+                                                <p className="font-semibold text-white leading-tight">
+                                                    {item.title}
+                                                </p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
+                                                        SKU: {item.sku || 'N/A'}
+                                                    </p>
+                                                    {/* Mostrar origen del item */}
+                                                    {item.assigned_supplier_id ? (
+                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                                                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                                                            </svg>
+                                                            Proveedor
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
+                                                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
+                                                            </svg>
+                                                            Stock Propio
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="text-right flex-shrink-0 w-48">
+                                                <p className="text-white font-semibold">
+                                                    {item.quantity} x {formatCurrency(item.unit_price)}
+                                                </p>
+                                                <p className="text-xs text-yellow-400 mt-1">
+                                                    Costo c/IVA: {formatCurrency(item.cost_with_vat)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    
+                                    {/* Desglose detallado (plegable) */}
+                                    {expandedOrders.has(order.id) && (
+                                        <div className="border-t border-gray-700 mt-2 pt-2">
+                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                                                <span className="text-gray-400">Cobro total de la venta:</span>
+                                                <span className="text-white text-right font-mono">{formatCurrency(order.total_amount)}</span>
+                                                
+                                                <span className="text-gray-400">Costo de tu envío:</span>
+                                                <span className="text-white text-right font-mono">{formatCurrency(order.shipping_cost)}</span>
+                                                
+                                                <span className="text-red-400">Cargo por Venta:</span>
+                                                <span className="text-red-400 text-right font-mono">- {formatCurrency(order.sale_fee)}</span>
+                                                
+                                                <span className="text-red-400">Impuestos y percepciones:</span>
+                                                <span className="text-red-400 text-right font-mono">- {formatCurrency(order.taxes_amount)}</span>
+                                                
+                                                <span className="text-green-400 font-bold border-t border-gray-600 mt-1 pt-1">Recibes:</span>
+                                                <span className="text-green-400 text-right font-bold font-mono border-t border-gray-600 mt-1 pt-1">{formatCurrency(order.net_received_amount)}</span>
+                                                
+                                                <span className="text-yellow-400 font-bold">Costo Total Productos c/IVA:</span>
+                                                <span className="text-yellow-400 text-right font-bold font-mono">{formatCurrency(order.total_cost_with_vat)}</span>
+                                                
+                                                <span className="text-cyan-300 font-bold text-lg border-t-2 border-cyan-700 mt-1 pt-1">Ganancia:</span>
+                                                <span className="text-cyan-300 text-right font-bold font-mono text-lg border-t-2 border-cyan-700 mt-1 pt-1">{formatCurrency(order.net_received_amount - order.total_cost_with_vat)}</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Footer con acciones */}
+                                <div className="p-4 bg-gray-800 border-t border-gray-700 flex justify-between items-center">
+                                    <div>
+                                        {getStatusChip(order.status)}
+                                        <button 
+                                            onClick={() => toggleOrderDetails(order.id)} 
+                                            className="ml-4 px-3 py-1 text-xs text-gray-300 bg-gray-700 rounded-full hover:bg-gray-600"
+                                        >
+                                            {expandedOrders.has(order.id) ? 'Ocultar Detalle' : 'Ver Detalle'}
+                                        </button>
+                                    </div>
+                                    {order.status === 'Recibido' && (
+                                        <button 
+                                            onClick={() => handleProcessOrder(order.id)} 
+                                            disabled={isProcessing === order.id} 
+                                            className="px-5 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-600"
+                                        >
+                                            {isProcessing === order.id ? 'Procesando...' : 'Procesar Pedido'}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    )) : ( 
+                        );
+                    }) : ( 
                         <div className="text-center py-12 px-6 bg-gray-800 border border-gray-700 rounded-lg">
                             <h3 className="mt-2 text-lg font-medium text-white">No se encontraron ventas</h3>
                             <p className="mt-1 text-sm text-gray-400">
@@ -807,23 +848,4 @@ const SalesView = () => {
     );
 };
 
-export default SalesView;d-lg text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
-                            >
-                                <option value="all">🚚 Todos los Envíos</option>
-                                <option value="flex">⚡ Flex</option>
-                                <option value="mercado_envios">📦 Mercado Envíos</option>
-                            </select>
-                        </div>
-                        
-                        {/* Filtro de Estado */}
-                        <div className="group">
-                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
-                                <svg className="w-4 h-4 text-gray-400 group-hover:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                <span>Estado</span>
-                            </label>
-                            <select 
-                                value={filters.status} 
-                                onChange={e => setFilters({...filters, status: e.target.value})} 
-                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounde
+export default SalesView;
