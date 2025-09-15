@@ -243,7 +243,6 @@ const ExcelImportExport = () => {
                         rubro: item.rubro || existingProduct.rubro,
                         subrubro: item.subrubro || existingProduct.subrubro,
                         stock_total: item.stock_total,
-                        stock_disponible: item.stock_total,
                         cost_price: costPrice > 0 ? costPrice : existingProduct.cost_price
                     };
 
@@ -272,7 +271,6 @@ const ExcelImportExport = () => {
                         subrubro: item.subrubro,
                         stock_total: item.stock_total,
                         stock_reservado: 0,
-                        stock_disponible: item.stock_total,
                         cost_price: costPrice,
                         sale_price: 0
                     };
