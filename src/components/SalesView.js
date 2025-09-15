@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CORREGIDA: Costos desde supplier_stock_items con mapeo de SKUs mejorado
+// VERSIÓN COMPLETA con Smart Processing y indicadores de origen
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -44,10 +44,39 @@ const SalesView = () => {
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
 
-    // Función para normalizar SKUs - remueve espacios extra y normaliza formato
-    const normalizeSku = (sku) => {
-        if (!sku) return '';
-        return sku.toString().trim().replace(/\s+/g, ' ').toUpperCase();
+    // Función para obtener el chip de origen
+    const getSourceChip = (sourceType) => {
+        switch(sourceType) {
+            case 'stock_propio':
+                return (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
+                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
+                        </svg>
+                        Stock Propio
+                    </span>
+                );
+            case 'proveedor_directo':
+                return (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                        </svg>
+                        Proveedor
+                    </span>
+                );
+            case 'mixto':
+                return (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd"/>
+                        </svg>
+                        Mixto
+                    </span>
+                );
+            default:
+                return null;
+        }
     };
 
     // Cargar datos de supplier_stock_items para obtener costos del proveedor
@@ -66,21 +95,14 @@ const SalesView = () => {
                 console.log('DEBUG - Datos de supplier_stock_items cargados:', data);
                 console.log('DEBUG - Cantidad de items:', data?.length || 0);
                 
-                // Normalizar SKUs y mostrar algunos ejemplos
-                const normalizedData = data?.map(item => ({
-                    ...item,
-                    normalized_sku: normalizeSku(item.sku),
-                    original_sku: item.sku
-                })) || [];
-                
-                if (normalizedData.length > 0) {
+                if (data && data.length > 0) {
                     console.log('DEBUG - Primeros 5 SKUs encontrados:');
-                    normalizedData.slice(0, 5).forEach(item => {
-                        console.log(`  Original: "${item.original_sku}" -> Normalizado: "${item.normalized_sku}" -> Precio: ${item.cost_price}`);
+                    data.slice(0, 5).forEach(item => {
+                        console.log(`  SKU: "${item.sku}" -> Precio: ${item.cost_price}`);
                     });
                 }
                 
-                setSupplierStockItems(normalizedData);
+                setSupplierStockItems(data || []);
             } catch (error) {
                 console.error('Error cargando costos de proveedor:', error);
             }
@@ -154,7 +176,6 @@ const SalesView = () => {
                         console.log('DEBUG - Supplier info existe pero cost_price es:', supplierInfo.cost_price);
                     } else {
                         console.log('DEBUG - No existe registro en supplier_stock_items para:', item.sku);
-                        // Mostrar los primeros 5 SKUs disponibles para debug
                         if (supplierStockItems.length > 0) {
                             console.log('DEBUG - SKUs disponibles (primeros 5):');
                             supplierStockItems.slice(0, 5).forEach(s => {
@@ -283,14 +304,35 @@ const SalesView = () => {
         } 
     };
     
+    // FUNCIÓN ACTUALIZADA para usar smart-process-order
     const handleProcessOrder = async (orderId) => { 
         setIsProcessing(orderId); 
         try { 
-            const { data, error } = await supabase.functions.invoke('process-mercado-libre-order', { 
+            const { data, error } = await supabase.functions.invoke('smart-process-order', { 
                 body: { order_id: orderId } 
             }); 
+            
             if (error) throw error; 
-            showMessage(data.message, 'success'); 
+            
+            // Mostrar mensaje detallado basado en la respuesta
+            const response = data;
+            if (response.success) {
+                showMessage(response.message, 'success');
+                
+                // Mostrar detalles adicionales si se crearon pedidos a proveedores
+                if (response.supplier_orders_created && response.supplier_orders_created.length > 0) {
+                    const supplierDetails = response.supplier_orders_created
+                        .map(so => `${so.supplier_name} (${so.items_count} items)`)
+                        .join(', ');
+                    
+                    setTimeout(() => {
+                        showMessage(`Pedidos creados automáticamente: ${supplierDetails}`, 'info');
+                    }, 2000);
+                }
+            } else {
+                throw new Error(response.error || 'Error desconocido');
+            }
+            
             await Promise.all([fetchSalesOrders(), fetchSupplierOrders()]); 
         } catch (err) { 
             showMessage(`Error al procesar la orden: ${err.message}`, 'error'); 
@@ -484,25 +526,6 @@ const SalesView = () => {
                             <select 
                                 value={filters.shippingType} 
                                 onChange={e => setFilters({...filters, shippingType: e.target.value})} 
-                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
-                            >
-                                <option value="all">🚚 Todos los Envíos</option>
-                                <option value="flex">⚡ Flex</option>
-                                <option value="mercado_envios">📦 Mercado Envíos</option>
-                            </select>
-                        </div>
-                        
-                        {/* Filtro de Estado */}
-                        <div className="group">
-                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
-                                <svg className="w-4 h-4 text-gray-400 group-hover:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                <span>Estado</span>
-                            </label>
-                            <select 
-                                value={filters.status} 
-                                onChange={e => setFilters({...filters, status: e.target.value})} 
                                 className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 transition-all duration-200"
                             >
                                 <option value="all">📋 Todos los Estados</option>
@@ -607,9 +630,13 @@ const SalesView = () => {
                                         <p className="text-lg font-bold text-white">
                                             {order.buyer_name || 'Comprador Desconocido'}
                                         </p>
-                                        <p className="text-xs text-gray-400">
-                                            {formatDate(order.created_at)}
-                                        </p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <p className="text-xs text-gray-400">
+                                                {formatDate(order.created_at)}
+                                            </p>
+                                            {/* NUEVO: Chip de origen a nivel de orden */}
+                                            {getSourceChip(order.source_type)}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="flex-shrink-0 text-right">
@@ -626,7 +653,7 @@ const SalesView = () => {
                             <div className="p-4">
                                 {order.order_items.map((item, index) => (
                                     <div key={item.meli_item_id || index} className="flex items-start gap-4 p-2 mb-2">
-                                        {/* Imagen del producto corregida */}
+                                        {/* Imagen del producto */}
                                         <div className="flex-shrink-0">
                                             {item.images && item.images.length > 0 ? (
                                                 <img 
@@ -640,7 +667,6 @@ const SalesView = () => {
                                                     }}
                                                 />
                                             ) : null}
-                                            {/* Placeholder cuando no hay imagen */}
                                             <div 
                                                 className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center" 
                                                 style={{display: item.images && item.images.length > 0 ? 'none' : 'flex'}}
@@ -655,10 +681,29 @@ const SalesView = () => {
                                             <p className="font-semibold text-white leading-tight">
                                                 {item.title}
                                             </p>
-                                            <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded mt-1">
-                                                SKU: {item.sku || 'N/A'}
-                                            </p>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
+                                                    SKU: {item.sku || 'N/A'}
+                                                </p>
+                                                {/* NUEVO: Mostrar origen del item */}
+                                                {item.assigned_supplier_id ? (
+                                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                                                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                                                        </svg>
+                                                        Proveedor
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
+                                                        <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
+                                                        </svg>
+                                                        Stock Propio
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
+                                        
                                         <div className="text-right flex-shrink-0 w-48">
                                             <p className="text-white font-semibold">
                                                 {item.quantity} x {formatCurrency(item.unit_price)}
@@ -762,4 +807,23 @@ const SalesView = () => {
     );
 };
 
-export default SalesView;
+export default SalesView;d-lg text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
+                            >
+                                <option value="all">🚚 Todos los Envíos</option>
+                                <option value="flex">⚡ Flex</option>
+                                <option value="mercado_envios">📦 Mercado Envíos</option>
+                            </select>
+                        </div>
+                        
+                        {/* Filtro de Estado */}
+                        <div className="group">
+                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
+                                <svg className="w-4 h-4 text-gray-400 group-hover:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span>Estado</span>
+                            </label>
+                            <select 
+                                value={filters.status} 
+                                onChange={e => setFilters({...filters, status: e.target.value})} 
+                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounde
