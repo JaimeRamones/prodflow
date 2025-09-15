@@ -603,6 +603,11 @@ const SalesView = () => {
                                     📋 {filters.status}
                                 </span>
                             )}
+                            {filters.origin !== 'all' && (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                    🏢 {filters.origin === 'stock_propio' ? 'Stock Propio' : filters.origin === 'proveedor_directo' ? 'Proveedor Directo' : 'Mixto'}
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>
@@ -725,11 +730,25 @@ const SalesView = () => {
                                                     <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
                                                         SKU: {item.sku || 'N/A'}
                                                     </p>
-                                                    {/* Mostrar origen del item */}
+                                                    {/* Mostrar origen del item con información del proveedor */}
                                                     {item.assigned_supplier_id ? (
-                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                                                        <div className="flex flex-col gap-1">
+                                                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                                                                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                                                                </svg>
+                                                                {getSupplierInfo(item) || 'Proveedor Directo'}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
                                                             <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                                                                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
+                                                            </svg>
+                                                            Stock Propio
+                                                        </span>
+                                                    )}
+                                                </div>2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
                                                             </svg>
                                                             Proveedor
                                                         </span>
