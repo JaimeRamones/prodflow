@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN COMPLETA con Smart Processing y indicadores de origen - SIN ERRORES
+// VERSIÓN COMPLETA con Smart Processing, indicadores de origen y filtros avanzados - SIN ERRORES
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -26,7 +26,7 @@ const ShippingIcon = () => (
 );
 
 const SalesView = () => {
-    const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders } = useContext(AppContext);
+    const { products, showMessage, salesOrders, fetchSalesOrders, fetchSupplierOrders, suppliers } = useContext(AppContext);
     const [isLoading, setIsLoading] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isProcessing, setIsProcessing] = useState(null);
@@ -34,7 +34,11 @@ const SalesView = () => {
     const [page, setPage] = useState(0);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedOrders, setSelectedOrders] = useState(new Set());
-    const [filters, setFilters] = useState({ shippingType: 'all', status: 'all' });
+    const [filters, setFilters] = useState({ 
+        shippingType: 'all', 
+        status: 'all', 
+        origin: 'all' // NUEVO: filtro por origen
+    });
     const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
     const [expandedOrders, setExpandedOrders] = useState(new Set());
     const [lastSyncTime, setLastSyncTime] = useState(null);
@@ -43,6 +47,13 @@ const SalesView = () => {
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
+
+    // Función para obtener información del proveedor
+    const getSupplierInfo = (supplierId) => {
+        if (!supplierId || !suppliers) return 'Stock Propio';
+        const supplier = suppliers.find(s => s.id === supplierId);
+        return supplier ? supplier.name : 'Proveedor Desconocido';
+    };
 
     // Función para obtener el chip de origen
     const getSourceChip = (sourceType) => {
@@ -250,6 +261,19 @@ const SalesView = () => {
                 filtered = filtered.filter(order => order.status === filters.status); 
             }
         }
+
+        // NUEVO: Filtrar por origen
+        if (filters.origin !== 'all') {
+            filtered = filtered.filter(order => {
+                const orderSourceTypes = order.order_items.map(item => 
+                    item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                );
+                const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
+                
+                return orderSourceType === filters.origin;
+            });
+        }
         
         if (searchTerm.trim()) {
             const term = searchTerm.trim().toLowerCase();
@@ -274,6 +298,27 @@ const SalesView = () => {
     }, [filteredAndSortedOrders, page]);
     
     const totalPages = Math.ceil(filteredAndSortedOrders.length / ITEMS_PER_PAGE);
+
+    // Calcular estadísticas por origen
+    const originStats = useMemo(() => {
+        const stats = {
+            stock_propio: 0,
+            proveedor_directo: 0,
+            mixto: 0
+        };
+
+        processedOrders.forEach(order => {
+            const orderSourceTypes = order.order_items.map(item => 
+                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+            );
+            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+            const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
+            
+            stats[orderSourceType]++;
+        });
+
+        return stats;
+    }, [processedOrders]);
     
     useEffect(() => { 
         if(salesOrders) setIsLoading(false); 
@@ -300,6 +345,21 @@ const SalesView = () => {
         } else { 
             setSelectedOrders(new Set()); 
         } 
+    };
+
+    // NUEVO: Selección masiva por origen
+    const handleSelectByOrigin = (originType) => {
+        const ordersOfOrigin = paginatedOrders.filter(order => {
+            const orderSourceTypes = order.order_items.map(item => 
+                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+            );
+            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+            const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
+            
+            return orderSourceType === originType;
+        });
+        
+        setSelectedOrders(new Set(ordersOfOrigin.map(o => o.id)));
     };
     
     const handleSyncSales = async () => { 
@@ -448,11 +508,11 @@ const SalesView = () => {
     };
 
     const clearAllFilters = () => {
-        setFilters({ shippingType: 'all', status: 'all' });
+        setFilters({ shippingType: 'all', status: 'all', origin: 'all' });
         setSearchTerm('');
     };
 
-    const hasActiveFilters = filters.shippingType !== 'all' || filters.status !== 'all' || searchTerm.trim() !== '';
+    const hasActiveFilters = filters.shippingType !== 'all' || filters.status !== 'all' || filters.origin !== 'all' || searchTerm.trim() !== '';
 
     return (
         <div>
@@ -497,6 +557,65 @@ const SalesView = () => {
                 </div>
             </div>
 
+            {/* Dashboard de estadísticas por origen */}
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-gradient-to-r from-gray-900/80 to-gray-800/80 rounded-xl border border-gray-700/50 p-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-gray-400">Total Órdenes</p>
+                            <p className="text-2xl font-bold text-white">{processedOrders.length}</p>
+                        </div>
+                        <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                            <svg className="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-green-900/40 to-green-800/40 rounded-xl border border-green-700/50 p-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-green-400">Stock Propio</p>
+                            <p className="text-2xl font-bold text-white">{originStats.stock_propio}</p>
+                        </div>
+                        <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
+                            <svg className="w-6 h-6 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-orange-900/40 to-orange-800/40 rounded-xl border border-orange-700/50 p-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-orange-400">Proveedor</p>
+                            <p className="text-2xl font-bold text-white">{originStats.proveedor_directo}</p>
+                        </div>
+                        <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
+                            <svg className="w-6 h-6 text-orange-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-blue-900/40 to-blue-800/40 rounded-xl border border-blue-700/50 p-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-blue-400">Mixto</p>
+                            <p className="text-2xl font-bold text-white">{originStats.mixto}</p>
+                        </div>
+                        <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                            <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {/* Filtros mejorados estéticamente */}
             <div className="mb-6 p-6 bg-gradient-to-r from-gray-900/80 to-gray-800/80 rounded-xl border border-gray-700/50 backdrop-blur-sm">
                 <div className="space-y-4">
@@ -509,7 +628,7 @@ const SalesView = () => {
                         </div>
                         <input 
                             type="text" 
-                            placeholder="Buscar por Nº de Venta, SKU, Comprador o Nº de Envío..." 
+                            placeholder="Buscar por N° de Venta, SKU, Comprador o N° de Envío..." 
                             value={searchTerm} 
                             onChange={(e) => setSearchTerm(e.target.value)} 
                             className="w-full pl-10 pr-10 py-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200" 
@@ -527,7 +646,7 @@ const SalesView = () => {
                     </div>
                     
                     {/* Filtros en cards separadas */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         {/* Filtro de Tipo de Envío */}
                         <div className="group">
                             <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
@@ -541,9 +660,9 @@ const SalesView = () => {
                                 onChange={e => setFilters({...filters, shippingType: e.target.value})} 
                                 className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
                             >
-                                <option value="all">🚚 Todos los Envíos</option>
-                                <option value="flex">⚡ Flex</option>
-                                <option value="mercado_envios">📦 Mercado Envíos</option>
+                                <option value="all">Todos los Envíos</option>
+                                <option value="flex">Flex</option>
+                                <option value="mercado_envios">Mercado Envíos</option>
                             </select>
                         </div>
                         
@@ -560,12 +679,32 @@ const SalesView = () => {
                                 onChange={e => setFilters({...filters, status: e.target.value})} 
                                 className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 transition-all duration-200"
                             >
-                                <option value="all">📋 Todos los Estados</option>
-                                <option value="Recibido">📥 Recibido</option>
-                                <option value="Pendiente">⏳ Pendiente</option>
-                                <option value="En Preparación">🔧 En Preparación</option>
-                                <option value="daily_dispatch">🌅 Envíos del Día</option>
-                                <option value="cancelled">❌ Canceladas</option>
+                                <option value="all">Todos los Estados</option>
+                                <option value="Recibido">Recibido</option>
+                                <option value="Pendiente">Pendiente</option>
+                                <option value="En Preparación">En Preparación</option>
+                                <option value="daily_dispatch">Envíos del Día</option>
+                                <option value="cancelled">Canceladas</option>
+                            </select>
+                        </div>
+
+                        {/* NUEVO: Filtro por Origen */}
+                        <div className="group">
+                            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
+                                <svg className="w-4 h-4 text-gray-400 group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                                </svg>
+                                <span>Origen</span>
+                            </label>
+                            <select 
+                                value={filters.origin} 
+                                onChange={e => setFilters({...filters, origin: e.target.value})} 
+                                className="w-full p-3 bg-gray-800/60 border border-gray-600/50 rounded-lg text-white focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 transition-all duration-200"
+                            >
+                                <option value="all">Todos los Orígenes ({processedOrders.length})</option>
+                                <option value="stock_propio">Stock Propio ({originStats.stock_propio})</option>
+                                <option value="proveedor_directo">Proveedor Directo ({originStats.proveedor_directo})</option>
+                                <option value="mixto">Mixto ({originStats.mixto})</option>
                             </select>
                         </div>
                         
@@ -590,22 +729,22 @@ const SalesView = () => {
                         <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-700/50">
                             {searchTerm && (
                                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                                    🔍 "{searchTerm}"
+                                    Búsqueda: "{searchTerm}"
                                 </span>
                             )}
                             {filters.shippingType !== 'all' && (
                                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
-                                    🚚 {filters.shippingType === 'flex' ? 'Flex' : 'Mercado Envíos'}
+                                    Envío: {filters.shippingType === 'flex' ? 'Flex' : 'Mercado Envíos'}
                                 </span>
                             )}
                             {filters.status !== 'all' && (
                                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
-                                    📋 {filters.status}
+                                    Estado: {filters.status}
                                 </span>
                             )}
                             {filters.origin !== 'all' && (
                                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                    🏢 {filters.origin === 'stock_propio' ? 'Stock Propio' : filters.origin === 'proveedor_directo' ? 'Proveedor Directo' : 'Mixto'}
+                                    Origen: {filters.origin === 'stock_propio' ? 'Stock Propio' : filters.origin === 'proveedor_directo' ? 'Proveedor Directo' : 'Mixto'}
                                 </span>
                             )}
                         </div>
@@ -613,35 +752,111 @@ const SalesView = () => {
                 </div>
             </div>
 
-            {/* Controles de selección e impresión */}
-            <div className="flex items-center gap-4 mb-4">
-                <div className="flex items-center">
-                    <input 
-                        type="checkbox" 
-                        onChange={handleSelectAll} 
-                        checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} 
-                        className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" 
-                    />
-                    <label className="ml-2 text-sm text-gray-400">
-                        Seleccionar todos en esta página ({selectedOrders.size} seleccionados)
-                    </label>
+            {/* Controles de selección e impresión mejorados */}
+            <div className="flex flex-col gap-4 mb-4">
+                {/* Fila superior: Estadísticas y selección básica */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center">
+                            <input 
+                                type="checkbox" 
+                                onChange={handleSelectAll} 
+                                checked={paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length} 
+                                className="w-5 h-5 bg-gray-700 border border-gray-600 rounded" 
+                            />
+                            <label className="ml-2 text-sm text-gray-400">
+                                Seleccionar todos ({selectedOrders.size} de {paginatedOrders.length} seleccionados)
+                            </label>
+                        </div>
+                        
+                        {/* Estadísticas de la página actual */}
+                        <div className="text-sm text-gray-400">
+                            Mostrando {paginatedOrders.length} de {filteredAndSortedOrders.length} órdenes
+                        </div>
+                    </div>
+
+                    {/* Controles de impresión */}
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => handlePrintLabels('pdf')} 
+                            disabled={selectedOrders.size === 0 || isPrinting} 
+                            className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            {isPrinting ? 'Imprimiendo...' : `Imprimir PDF (${selectedOrders.size})`}
+                        </button>
+                        
+                        <button 
+                            onClick={() => handlePrintLabels('zpl')} 
+                            disabled={selectedOrders.size === 0 || isPrinting} 
+                            className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                            {isPrinting ? 'Imprimiendo...' : `Imprimir ZPL (${selectedOrders.size})`}
+                        </button>
+                    </div>
                 </div>
-                
-                <button 
-                    onClick={() => handlePrintLabels('pdf')} 
-                    disabled={selectedOrders.size === 0 || isPrinting} 
-                    className="px-4 py-2 text-sm bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                    {isPrinting ? 'Imprimiendo...' : 'Imprimir PDF'}
-                </button>
-                
-                <button 
-                    onClick={() => handlePrintLabels('zpl')} 
-                    disabled={selectedOrders.size === 0 || isPrinting} 
-                    className="px-4 py-2 text-sm bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50"
-                >
-                    {isPrinting ? 'Imprimiendo...' : 'Imprimir ZPL'}
-                </button>
+
+                {/* Fila inferior: Selección masiva por origen */}
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        onClick={() => handleSelectByOrigin('stock_propio')}
+                        disabled={!paginatedOrders.some(order => {
+                            const orderSourceTypes = order.order_items.map(item => 
+                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                            );
+                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'stock_propio';
+                        })}
+                        className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Solo Stock Propio ({paginatedOrders.filter(order => {
+                            const orderSourceTypes = order.order_items.map(item => 
+                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                            );
+                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'stock_propio';
+                        }).length})
+                    </button>
+
+                    <button
+                        onClick={() => handleSelectByOrigin('proveedor_directo')}
+                        disabled={!paginatedOrders.some(order => {
+                            const orderSourceTypes = order.order_items.map(item => 
+                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                            );
+                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'proveedor_directo';
+                        })}
+                        className="px-3 py-1 text-xs bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Solo Proveedor ({paginatedOrders.filter(order => {
+                            const orderSourceTypes = order.order_items.map(item => 
+                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                            );
+                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'proveedor_directo';
+                        }).length})
+                    </button>
+
+                    <button
+                        onClick={() => handleSelectByOrigin('mixto')}
+                        disabled={!paginatedOrders.some(order => {
+                            const orderSourceTypes = order.order_items.map(item => 
+                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                            );
+                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                            return uniqueSourceTypes.length > 1;
+                        })}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Solo Mixtas ({paginatedOrders.filter(order => {
+                            const orderSourceTypes = order.order_items.map(item => 
+                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+                            );
+                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
+                            return uniqueSourceTypes.length > 1;
+                        }).length})
+                    </button>
+                </div>
             </div>
             
             {/* Lista de órdenes */}
@@ -730,27 +945,13 @@ const SalesView = () => {
                                                     <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
                                                         SKU: {item.sku || 'N/A'}
                                                     </p>
-                                                    {/* Mostrar origen del item con información del proveedor */}
+                                                    {/* Mostrar origen del item */}
                                                     {item.assigned_supplier_id ? (
-                                                        <div className="flex flex-col gap-1">
-                                                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
-                                                                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
-                                                                </svg>
-                                                                {getSupplierInfo(item) || 'Proveedor Directo'}
-                                                            </span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
+                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
                                                             <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
+                                                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
                                                             </svg>
-                                                            Stock Propio
-                                                        </span>
-                                                    )}
-                                                </div>2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
-                                                            </svg>
-                                                            Proveedor
+                                                            {getSupplierInfo(item.assigned_supplier_id)}
                                                         </span>
                                                     ) : (
                                                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
