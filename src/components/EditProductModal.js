@@ -42,17 +42,16 @@ const EditProductModal = ({ product, onClose, onSave }) => {
         }
     }, [editedProduct?.cost_price, editedProduct?.supplier_id, suppliers]);
 
-
     const handleChange = (e) => {
         const { name, value } = e.target;
-        // --- CAMBIO 1: Cambiamos 'stock_disponible' por 'stock_total' en la lista de campos numéricos ---
-        const isNumeric = name === 'supplier_id' || name === 'stock_total';
+        // Campos numéricos
+        const isNumeric = name === 'supplier_id' || name === 'stock_total' || name === 'stock_reservado';
         
         let finalValue;
         if (name === 'cost_price') {
             finalValue = value; 
         } else if (isNumeric) {
-            finalValue = value ? parseInt(value, 10) : null;
+            finalValue = value ? parseInt(value, 10) : 0;
         } else {
             finalValue = value;
         }
@@ -65,10 +64,14 @@ const EditProductModal = ({ product, onClose, onSave }) => {
         setEditedProduct(newProductState);
     };
 
+    // Función para resetear stock reservado a 0
+    const handleResetReservedStock = () => {
+        setEditedProduct(prev => ({ ...prev, stock_reservado: 0 }));
+    };
+
     const handleSave = (e) => {
         e.preventDefault();
-        // --- CAMBIO 2: Nos aseguramos de NO enviar 'stock_disponible' para que la DB lo calcule. ---
-        // Creamos una copia para no alterar el estado visual del modal.
+        // Nos aseguramos de NO enviar 'stock_disponible' para que la DB lo calcule
         const productToSave = { ...editedProduct };
         delete productToSave.stock_disponible;
 
@@ -81,6 +84,11 @@ const EditProductModal = ({ product, onClose, onSave }) => {
     const subrubroOptions = editedProduct.rubro && masterData.categories[editedProduct.rubro]
         ? masterData.categories[editedProduct.rubro]
         : [];
+
+    // Calcular stock disponible en tiempo real para mostrar
+    const stockTotal = parseInt(editedProduct.stock_total) || 0;
+    const stockReservado = parseInt(editedProduct.stock_reservado) || 0;
+    const stockDisponibleCalculado = stockTotal - stockReservado;
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex justify-center items-center p-4">
@@ -112,10 +120,74 @@ const EditProductModal = ({ product, onClose, onSave }) => {
                                 <label className="block mb-2 text-sm font-medium text-white">Precio de Venta (Automático)</label>
                                 <input type="number" step="0.01" name="sale_price" value={editedProduct.sale_price || ''} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-900/50 border-gray-600 cursor-not-allowed" readOnly />
                             </div>
-                            {/* --- CAMBIO 3: El campo ahora edita 'stock_total' --- */}
-                            <div>
-                                <label className="block mb-2 text-sm font-medium text-white">Stock Total</label>
-                                <input type="number" name="stock_total" value={editedProduct.stock_total || ''} onChange={handleChange} className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" />
+                        </div>
+
+                        {/* NUEVA SECCIÓN: Gestión de Stock */}
+                        <div className="pt-4 border-t border-gray-700">
+                            <h3 className="text-lg font-semibold text-white mb-4">Gestión de Stock</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                {/* Stock Total */}
+                                <div>
+                                    <label className="block mb-2 text-sm font-medium text-white">Stock Total</label>
+                                    <input 
+                                        type="number" 
+                                        name="stock_total" 
+                                        value={editedProduct.stock_total || ''} 
+                                        onChange={handleChange} 
+                                        className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" 
+                                        min="0"
+                                    />
+                                </div>
+
+                                {/* Stock Reservado */}
+                                <div>
+                                    <label className="block mb-2 text-sm font-medium text-white">Stock Reservado</label>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="number" 
+                                            name="stock_reservado" 
+                                            value={editedProduct.stock_reservado || 0} 
+                                            onChange={handleChange} 
+                                            className="border text-sm rounded-lg block w-full p-2.5 bg-gray-700 border-gray-600" 
+                                            min="0"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleResetReservedStock}
+                                            className="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs rounded-lg transition-colors whitespace-nowrap"
+                                            title="Resetear a 0"
+                                        >
+                                            Reset
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Stock Disponible (Calculado) */}
+                                <div>
+                                    <label className="block mb-2 text-sm font-medium text-white">Stock Disponible (Calculado)</label>
+                                    <input 
+                                        type="number" 
+                                        value={stockDisponibleCalculado} 
+                                        className={`border text-sm rounded-lg block w-full p-2.5 bg-gray-900/50 border-gray-600 cursor-not-allowed ${
+                                            stockDisponibleCalculado < 0 ? 'text-red-400' : 'text-green-400'
+                                        }`}
+                                        readOnly 
+                                    />
+                                    {stockDisponibleCalculado < 0 && (
+                                        <p className="text-xs text-red-400 mt-1">
+                                            ⚠️ Stock negativo: Revisa las reservas
+                                        </p>
+                                    )}
+                                </div>
+
+                                {/* Información adicional */}
+                                <div className="flex flex-col justify-center">
+                                    <div className="text-xs text-gray-400 space-y-1">
+                                        <div>Fórmula:</div>
+                                        <div className="font-mono">Disponible = Total - Reservado</div>
+                                        <div className="font-mono">{stockDisponibleCalculado} = {stockTotal} - {stockReservado}</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         
