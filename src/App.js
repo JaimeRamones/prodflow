@@ -62,7 +62,7 @@ const AppProvider = ({ children }) => {
         if (!session?.user?.id) return;
         try {
             const { data, error } = await supabase
-                .from('mercadolibre_auth')
+                .from('meli_credentials')
                 .select('access_token')
                 .eq('user_id', session.user.id)
                 .single();

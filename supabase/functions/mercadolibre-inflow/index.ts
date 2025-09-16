@@ -47,7 +47,7 @@ serve(async (req) => {
 
     // Obtener el token de MELI para ese usuario
     const { data: authData, error: authError } = await supabaseClient
-      .from('mercadolibre_auth') // Asume que tienes esta tabla
+      .from('meli_credentials') // Asume que tienes esta tabla
       .select('access_token')
       .eq('user_id', user.id)
       .single();
