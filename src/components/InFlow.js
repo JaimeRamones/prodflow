@@ -1,6 +1,6 @@
 // Ruta: src/components/InFlow.js
 
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useMemo } from 'react'; // ✅ Agregado useMemo
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import EditPublicationModal from './EditPublicationModal';
