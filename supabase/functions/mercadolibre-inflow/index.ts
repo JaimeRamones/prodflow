@@ -45,9 +45,9 @@ serve(async (req) => {
     const { data: { user } } = await supabaseClient.auth.getUser();
     if (!user) throw new Error("Usuario no autenticado.");
 
-    // Obtener el token de MELI para ese usuario
+    // Obtener el token de MELI para ese usuario usando el nombre correcto de tabla
     const { data: authData, error: authError } = await supabaseClient
-      .from('meli_credentials') // Asume que tienes esta tabla
+      .from('meli_credentials') // ✅ Corregido: ahora usa el nombre real de la tabla
       .select('access_token')
       .eq('user_id', user.id)
       .single();
@@ -61,28 +61,42 @@ serve(async (req) => {
     // Procesar cada fila del archivo subido
     for (const pub of publications) {
       try {
-        // Asegúrate que los nombres de las columnas en tu CSV coincidan (pub.Titulo, pub.Categoria, etc.)
+        // Flexibilidad para diferentes formatos de columnas (Integraly vs manual)
+        const titulo = pub.Título || pub.Title || pub.title || '';
+        const categoria = pub.Categoría || pub.Category || pub.category_id || pub._categoria || '';
+        const precio = pub.Precio || pub.Price || pub.price || 0;
+        const stock = pub.Stock || pub.Quantity || pub.available_quantity || 0;
+        const fotos = pub.Fotos || pub.Photos || pub.pictures || pub.imagen || '';
+        const marca = pub.Marca || pub.Brand || pub.brand || '';
+        const sku = pub.SKU || pub.sku || pub.seller_sku || '';
+
         const payload = {
-          title: pub.Titulo,
-          category_id: pub.Categoria,
-          price: parseFloat(pub.Precio),
+          title: titulo,
+          category_id: categoria,
+          price: parseFloat(precio) || 0,
           currency_id: 'ARS',
-          available_quantity: parseInt(pub.Stock, 10),
+          available_quantity: parseInt(stock, 10) || 0,
           buying_mode: 'buy_it_now',
           listing_type_id: 'gold_special',
           condition: 'new',
-          pictures: [{ source: pub.Fotos }],
+          pictures: fotos ? [{ source: fotos }] : [],
           attributes: [
-            { id: 'BRAND', value_name: pub.Marca },
-            { id: 'SELLER_SKU', value_name: pub.SKU }
+            ...(marca ? [{ id: 'BRAND', value_name: marca }] : []),
+            ...(sku ? [{ id: 'SELLER_SKU', value_name: sku }] : [])
           ],
         };
         
-        await meliApiCall('https://api.mercadolibre.com/items', 'POST', accessToken, payload);
-        successCount++;
+        // Solo procesar si tiene título y categoría mínimos
+        if (titulo && categoria) {
+          await meliApiCall('https://api.mercadolibre.com/items', 'POST', accessToken, payload);
+          successCount++;
+        } else {
+          errorCount++;
+          errors.push(`Fila ${publications.indexOf(pub) + 1}: Faltan datos obligatorios (Título o Categoría)`);
+        }
       } catch (err) {
         errorCount++;
-        errors.push(`SKU ${pub.SKU || 'N/A'}: ${err.message}`);
+        errors.push(`SKU ${pub.SKU || pub.sku || 'N/A'}: ${err.message}`);
       }
     }
 
