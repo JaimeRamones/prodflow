@@ -149,7 +149,6 @@ serve(async (req) => {
                                 meliId: pub.meli_id,
                                 variationId: pub.meli_variation_id,
                                 availableQuantity: newAvailableStock,
-                                sku: pub.sku
                             }
                             
                             if (newStatus !== pub.status) {

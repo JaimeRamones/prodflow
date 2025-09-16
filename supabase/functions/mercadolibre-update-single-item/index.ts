@@ -122,8 +122,8 @@ async function updateMeliItem(
             warnings.push(`Descripción no actualizada: ${cause.message}`);
           }
           
-          // Errores de SKU/seller_custom_field
-          if (cause.message.includes('seller_custom_field') || cause.message.includes('sku')) {
+          // Errores de SKU/SELLER_SKU
+          if (cause.message.includes('SELLER_SKU') || cause.message.includes('sku')) {
             warnings.push(`SKU no actualizado: ${cause.message}`);
           }
         }
@@ -135,7 +135,7 @@ async function updateMeliItem(
           // Quitar campos problemáticos y reintentar solo con precio y stock
           delete reducedPayload.title;
           delete reducedPayload.description;
-          delete reducedPayload.seller_custom_field;
+          delete reducedPayload.attributes;
           
           if (Object.keys(reducedPayload).length > 0) {
             const fallbackResponse = await fetch(`https://api.mercadolibre.com/items/${meliId}`, {
@@ -205,7 +205,8 @@ serve(async (req) => {
       price, 
       status,
       title,
-      description 
+      description,
+      safetyStock
     } = await req.json();
 
     if (!meliId) {
@@ -260,10 +261,25 @@ serve(async (req) => {
       updatedFields.push('status');
     }
 
-    // SKU (usando seller_custom_field para mayor compatibilidad)
+    // ✅ NUEVO: SKU usando SELLER_SKU (visible en MercadoLibre)
     if (sku !== undefined && sku !== null && sku.toString().trim() !== '') {
-      payload.seller_custom_field = sku.toString().trim();
+      payload.attributes = payload.attributes || [];
+      
+      const skuAttribute = {
+        id: 'SELLER_SKU',
+        value_name: sku.toString().trim()
+      };
+      
+      // Buscar si ya existe SELLER_SKU y reemplazarlo, sino agregarlo
+      const existingSkuIndex = payload.attributes.findIndex(attr => attr.id === 'SELLER_SKU');
+      if (existingSkuIndex >= 0) {
+        payload.attributes[existingSkuIndex] = skuAttribute;
+      } else {
+        payload.attributes.push(skuAttribute);
+      }
+      
       updatedFields.push('SKU');
+      console.log(`📦 SKU actualizado: ${sku.toString().trim()}`);
     }
 
     // Título
@@ -334,6 +350,11 @@ serve(async (req) => {
     
     if (title !== undefined && title !== null && title.toString().trim() !== '') {
       updateData.title = title.toString().trim();
+    }
+
+    // ✅ NUEVO: Actualizar stock de seguridad en BD local
+    if (safetyStock !== undefined) {
+      updateData.safety_stock = Math.max(0, parseInt(safetyStock.toString()) || 0);
     }
 
     updateData.last_synced_at = new Date().toISOString();

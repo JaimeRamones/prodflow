@@ -119,28 +119,43 @@ const PublicationsView = () => {
         return null;
     }, [publications, searchTerm]);
 
-    // NUEVA FUNCIÓN: Detectar nuevas publicaciones automáticamente
+    // MEJORADA: Detectar nuevas publicaciones con sincronización incremental
     const checkForNewPublications = async () => {
         if (!autoRefreshEnabled) return;
         
         try {
-            const { count: currentCount } = await supabase
-                .from('mercadolibre_listings')
-                .select('*', { count: 'exact', head: true });
+            // Ejecutar sincronización incremental
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-listings', {
+                body: { forceIncremental: true, preserveConfig: true }
+            });
             
-            if (currentCount > lastKnownCount && lastKnownCount > 0) {
-                setNewPublicationsCount(currentCount - lastKnownCount);
+            if (error) throw error;
+            
+            if (data.count > 0) {
+                setNewPublicationsCount(data.count);
+                await fetchPublications(); // Refrescar lista
+                showMessage(`${data.count} nuevas publicaciones detectadas automáticamente`, 'success');
             }
         } catch (error) {
-            console.error('Error checking for new publications:', error);
+            console.error('Error en auto-sync:', error);
+            // Solo mostrar error si es crítico, no por timeouts normales
+            if (error.message && !error.message.includes('timeout')) {
+                showMessage(`Error en auto-sincronización: ${error.message}`, 'error');
+            }
         }
     };
 
-    // NUEVA FUNCIÓN: Sincronizar nuevas publicaciones desde MercadoLibre
+    // MEJORADA: Sincronizar nuevas publicaciones preservando configuración
     const syncNewPublications = async () => {
         try {
             setIsLoading(true);
-            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-listings');
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-listings', {
+                body: { 
+                    forceIncremental: true, 
+                    preserveConfig: true,
+                    includeDescriptions: true // Incluir descripciones
+                }
+            });
             if (error) throw error;
             
             showMessage(`Sincronización completada. ${data.count} publicaciones procesadas.`, 'success');
@@ -379,10 +394,12 @@ const PublicationsView = () => {
                     newStatus = shouldBeActive ? 'active' : 'paused';
                 }
                 
+                // MEJORADO: Usar la edge function actualizada con safetyStock
                 const syncPayload = {
                     meliId: currentPub.meli_id,
                     variationId: currentPub.meli_variation_id,
                     availableQuantity: newAvailableStock,
+                    safetyStock: newSafetyStock, // NUEVO: Pasar el stock de seguridad
                 };
                 
                 if (newStatus !== currentPub.status) {
@@ -426,7 +443,15 @@ const PublicationsView = () => {
         }
     };
     
-    const handleSavePublication = async ({ newPrice, newSku, newStock }) => {
+    // MEJORADA: Función handleSavePublication con todos los campos incluidos
+    const handleSavePublication = async ({ 
+        newPrice, 
+        newSku, 
+        newStock, 
+        newSafetyStock,
+        newTitle,
+        newDescription 
+    }) => {
         if (!editingPublication) return;
         setIsSaving(true);
         try {
@@ -443,6 +468,21 @@ const PublicationsView = () => {
             if (newStock !== undefined && newStock !== editingPublication.available_quantity) {
                 updates.availableQuantity = newStock;
             }
+
+            // NUEVO: Soporte para stock de seguridad
+            if (newSafetyStock !== undefined && newSafetyStock !== (editingPublication.safety_stock || 0)) {
+                updates.safetyStock = newSafetyStock;
+            }
+
+            // NUEVO: Soporte para título
+            if (newTitle !== undefined && newTitle !== editingPublication.title) {
+                updates.title = newTitle;
+            }
+
+            // NUEVO: Soporte para descripción
+            if (newDescription !== undefined && newDescription !== editingPublication.description) {
+                updates.description = newDescription;
+            }
             
             if (Object.keys(updates).length > 0) {
                 const { error } = await supabase.functions.invoke('mercadolibre-update-single-item', {
@@ -455,16 +495,21 @@ const PublicationsView = () => {
                 
                 if (error) throw error;
                 
+                // Actualizar la publicación en la lista local
                 setPublications(pubs => pubs.map(p => 
                     p.id === editingPublication.id ? { 
                         ...p, 
                         price: newPrice !== undefined ? newPrice : p.price,
                         sku: newSku !== undefined ? newSku : p.sku,
-                        available_quantity: newStock !== undefined ? newStock : p.available_quantity
+                        available_quantity: newStock !== undefined ? newStock : p.available_quantity,
+                        safety_stock: newSafetyStock !== undefined ? newSafetyStock : p.safety_stock,
+                        title: newTitle !== undefined ? newTitle : p.title,
+                        description: newDescription !== undefined ? newDescription : p.description
                     } : p
                 ));
                 
-                showMessage('Publicación actualizada con éxito en MercadoLibre', 'success');
+                const updatedFields = Object.keys(updates);
+                showMessage(`Publicación actualizada con éxito en MercadoLibre (${updatedFields.join(', ')})`, 'success');
             } else {
                 showMessage('No hay cambios para sincronizar', 'info');
             }
@@ -804,7 +849,7 @@ const PublicationsView = () => {
                                 <div className="flex-shrink-0 pl-2">
                                     <div className="flex items-center gap-3">
                                         <ToggleSwitch checked={pub.sync_enabled === null ? true : pub.sync_enabled} onChange={() => handleSyncToggle(pub)} />
-                                        <button onClick={() => setEditingPublication(pub)} className="p-2 text-gray-400 hover:text-white" title="Editar SKU, Precio y Stock">
+                                        <button onClick={() => setEditingPublication(pub)} className="p-2 text-gray-400 hover:text-white" title="Editar publicación completa: SKU, Precio, Stock, Título, Descripción">
                                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L16.732 3.732z"></path></svg>
                                         </button>
                                     </div>
@@ -827,7 +872,10 @@ const PublicationsView = () => {
                     onClose={() => setEditingPublication(null)} 
                     onSave={handleSavePublication} 
                     isSaving={isSaving}
-                    allowStockEdit={true} 
+                    allowStockEdit={true}
+                    allowSafetyStockEdit={true}
+                    allowTitleEdit={true}
+                    allowDescriptionEdit={true}
                 /> 
             )}
         </div>
