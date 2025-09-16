@@ -246,7 +246,7 @@ const InFlow = () => {
     // --- Lógica para las demás funciones ---
     const handleExport = async () => {
         try {
-            showMessage('Preparando exportación...', 'info');
+            showMessage('Preparando exportación en formato Integraly...', 'info');
             
             // Obtener todas las publicaciones (sin paginación para export)
             const { data, error } = await supabase
@@ -256,22 +256,182 @@ const InFlow = () => {
 
             if (error) throw error;
 
-            // Crear workbook de Excel
+            // Transformar datos al formato Integraly
+            const integraly_data = data.map(pub => {
+                // Parsear atributos JSON si existen
+                let attributes = {};
+                try {
+                    if (pub.attributes && typeof pub.attributes === 'string') {
+                        attributes = JSON.parse(pub.attributes);
+                    } else if (pub.attributes && typeof pub.attributes === 'object') {
+                        attributes = pub.attributes;
+                    }
+                } catch (e) {
+                    console.warn('Error parsing attributes for', pub.id);
+                }
+
+                // Buscar atributos específicos
+                const brand = attributes.find?.(attr => attr.id === 'BRAND')?.value_name || '';
+                const model = attributes.find?.(attr => attr.id === 'MODEL')?.value_name || '';
+                const seller_sku = attributes.find?.(attr => attr.id === 'SELLER_SKU')?.value_name || pub.sku || '';
+
+                // Parsear imágenes
+                let pictures = [];
+                try {
+                    if (pub.pictures && typeof pub.pictures === 'string') {
+                        pictures = JSON.parse(pub.pictures);
+                    } else if (pub.pictures && Array.isArray(pub.pictures)) {
+                        pictures = pub.pictures;
+                    }
+                } catch (e) {
+                    console.warn('Error parsing pictures for', pub.id);
+                }
+
+                return {
+                    'Id': pub.meli_id || pub.id,
+                    'Vendedor': '', // Se puede agregar si tienes este dato
+                    'Tienda Oficial': '',
+                    'Categoría': pub.category_id || '',
+                    'Titulo': pub.title || '',
+                    'Descripción': '', // Agregar si tienes este campo
+                    'Precio': pub.price || 0,
+                    'Descuento': '0%',
+                    'Descuento Nivel 1 y 2': '0%',
+                    'Descuento Fecha Desde': '',
+                    'Descuento Fecha Hasta': '',
+                    'Moneda': 'ARS',
+                    'Comisión': '',
+                    'SKU': seller_sku,
+                    'seller_custom_field': '',
+                    'Estado': pub.status === 'active' ? 'Activa' : 
+                             pub.status === 'paused' ? 'Pausada' : 'Finalizada',
+                    'Stock': pub.available_quantity || 0,
+                    'Disponibilidad de stock': 0,
+                    'Tipo de Publicación': pub.listing_type_id || 'gold_special',
+                    'Condición': 'Nuevo',
+                    'Envio Gratis': '', // Agregar lógica si tienes este dato
+                    'Precio Envio Gratis': '',
+                    'Modo Envio': 'MercadoEnvios2',
+                    'Metodo Envio': 'Normal a domicilio',
+                    'Retira en Persona': 'Sí',
+                    'Envio FLEX': 'No',
+                    'Garantia': 'Garantía del vendedor: 30 días',
+                    'Fecha Creación': pub.created_at || '',
+                    'Última Actualización': pub.last_synced || '',
+                    'Resultado': '',
+                    'Resultado Observaciones': '',
+                    'Imagen 1': pictures[0]?.url || pictures[0] || pub.thumbnail_url || '',
+                    'Imagen 2': pictures[1]?.url || pictures[1] || '',
+                    'Imagen 3': pictures[2]?.url || pictures[2] || '',
+                    'Imagen 4': pictures[3]?.url || pictures[3] || '',
+                    'Imagen 5': pictures[4]?.url || pictures[4] || '',
+                    'Imagen 6': pictures[5]?.url || pictures[5] || '',
+                    'Imagen 7': pictures[6]?.url || pictures[6] || '',
+                    'Imagen 8': pictures[7]?.url || pictures[7] || '',
+                    'Imagen 9': pictures[8]?.url || pictures[8] || '',
+                    'Imagen 10': pictures[9]?.url || pictures[9] || '',
+                    'Video': '',
+                    'Canal de Publicación Exclusivo': '',
+                    'Visitas': '',
+                    'Vendidos': pub.sold_quantity || 0,
+                    'Tags': '',
+                    'Ahora 12': '',
+                    'URL Publicación': pub.permalink || '',
+                    'Calidad de la Publicación': '',
+                    'Calidad de la Imagen': '',
+                    'Mejoras pendientes': '',
+                    'Campaña': '',
+                    'Publicidad': '',
+                    'Estado Ficha Técnica': '',
+                    'Item de Catálogo': '',
+                    'Dominio': '',
+                    'Estado Para Participar en Catálogo': '',
+                    'Participar en Catálogo': '',
+                    'Catálogo Estado': '',
+                    'Catálogo Precio': '',
+                    'Catálogo SKU': '',
+                    'Catálogo Tipo De Publicación': '',
+                    'Catálogo Modo Envio': '',
+                    'Catálogo Metodo Envio': '',
+                    'Catálogo Envio Gratis': '',
+                    'Catálogo Retira en Persona': '',
+                    'Catálogo Garantía': '',
+                    'Catálogo Para Ganar': '',
+                    'Catálogo Código Universal': '',
+                    'Ubicación': '',
+                    'Domicilio': '',
+                    'Variación Color': '',
+                    'Variación Código universal de producto': '',
+                    'Atributo Marca': brand,
+                    'Atributo Línea': '',
+                    'Atributo Modelo': model
+                };
+            });
+
+            // Crear workbook con estructura Integraly
             const workbook = XLSX.utils.book_new();
             
-            // Agrupar por categoría si existe ese campo
-            const groupedByCategory = data.reduce((acc, pub) => {
-                const category = pub.category_name || pub.categoria || 'Sin Categoría';
+            // Crear hoja de ayuda
+            const helpData = [
+                ['INSTRUCCIONES DE USO'],
+                [''],
+                ['1. Este archivo está en formato Integraly para MercadoLibre'],
+                ['2. Puedes editar los campos y reimportar el archivo'],
+                ['3. Los campos obligatorios son: Titulo, Categoría, Precio, Stock'],
+                ['4. Las categorías deben ser IDs válidos de MercadoLibre (ej: MLA1132)'],
+                ['5. Las imágenes deben ser URLs públicas'],
+                ['6. Para más información visita: https://integraly.com'],
+                [''],
+                ['FECHA DE EXPORTACIÓN:', new Date().toLocaleString('es-AR')],
+                ['TOTAL DE PUBLICACIONES:', integraly_data.length]
+            ];
+            
+            const helpSheet = XLSX.utils.aoa_to_sheet(helpData);
+            XLSX.utils.book_append_sheet(workbook, helpSheet, 'Ayuda');
+
+            // Agrupar por categoría para crear hojas separadas
+            const groupedByCategory = integraly_data.reduce((acc, pub) => {
+                const category = pub.Categoría || 'Sin Categoría';
                 if (!acc[category]) acc[category] = [];
                 acc[category].push(pub);
                 return acc;
             }, {});
 
-            // Crear una hoja por categoría
-            Object.entries(groupedByCategory).forEach(([category, publications]) => {
-                const worksheet = XLSX.utils.json_to_sheet(publications);
-                XLSX.utils.book_append_sheet(workbook, worksheet, category.substring(0, 31)); // Excel limita nombres de hojas a 31 caracteres
+            // Crear una hoja por categoría (máximo 10 para no sobrecargar)
+            const categories = Object.keys(groupedByCategory).slice(0, 10);
+            categories.forEach(category => {
+                const categoryData = groupedByCategory[category];
+                const worksheet = XLSX.utils.json_to_sheet(categoryData);
+                
+                // Ajustar ancho de columnas para mejor visualización
+                const colWidths = [
+                    {wch: 15}, // Id
+                    {wch: 20}, // Vendedor  
+                    {wch: 15}, // Tienda Oficial
+                    {wch: 30}, // Categoría
+                    {wch: 50}, // Titulo
+                    {wch: 30}, // Descripción
+                    {wch: 10}, // Precio
+                    {wch: 10}, // Descuento
+                    {wch: 15}, // Descuento Nivel 1 y 2
+                    {wch: 15}, // Descuento Fecha Desde
+                    {wch: 15}, // Descuento Fecha Hasta
+                    {wch: 8},  // Moneda
+                    {wch: 10}, // Comisión
+                    {wch: 20}, // SKU
+                ];
+                worksheet['!cols'] = colWidths;
+                
+                // Nombre de hoja limitado a 31 caracteres
+                const sheetName = category.substring(0, 31);
+                XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
             });
+
+            // Si todas las publicaciones están sin categoría, crear una hoja general
+            if (categories.length === 1 && categories[0] === 'Sin Categoría') {
+                const worksheet = XLSX.utils.json_to_sheet(integraly_data);
+                XLSX.utils.book_append_sheet(workbook, worksheet, 'Todas las Publicaciones');
+            }
 
             // Generar archivo y descargar
             const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
@@ -280,11 +440,11 @@ const InFlow = () => {
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `publicaciones_${new Date().toISOString().split('T')[0]}.xlsx`;
+            link.download = `integraly_export_${new Date().toISOString().split('T')[0]}.xlsx`;
             link.click();
             window.URL.revokeObjectURL(url);
 
-            showMessage('Exportación completada exitosamente', 'success');
+            showMessage(`Exportación completada: ${integraly_data.length} publicaciones en formato Integraly`, 'success');
         } catch (err) {
             console.error('Error en exportación:', err);
             showMessage(`Error en la exportación: ${err.message}`, 'error');
