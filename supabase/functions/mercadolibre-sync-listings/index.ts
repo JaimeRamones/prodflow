@@ -81,6 +81,12 @@ serve(async (req) => {
     const syncTime = new Date().toISOString();
 
     try {
+        // Leer parámetros del request
+        const body = await req.json().catch(() => ({}));
+        const forceIncremental = body.forceIncremental || false;
+        const preserveConfig = body.preserveConfig || false;
+        const includeDescriptions = body.includeDescriptions || false;
+
         // Obtener userId (manual o cron job)
         let userId: string;
         
@@ -142,14 +148,14 @@ serve(async (req) => {
         
         const meliUserId = mlTokens.meli_user_id;
 
-        // Determinar tipo de sincronización
+        // Determinar tipo de sincronización - MEJORADO
         const { data: existingData, count: existingCount } = await supabaseAdmin
             .from('mercadolibre_listings')
-            .select('meli_id, meli_variation_id, prodflow_stock, prodflow_price, sync_enabled', { count: 'exact' })
+            .select('meli_id, meli_variation_id, prodflow_stock, prodflow_price, sync_enabled, safety_stock', { count: 'exact' })
             .eq('user_id', userId);
 
         const isFirstSync = !existingCount || existingCount === 0;
-        const forceFullSync = req.headers.get('X-Force-Full-Sync') === 'true';
+        const forceFullSync = req.headers.get('X-Force-Full-Sync') === 'true' && !forceIncremental;
         
         let listingIds: string[] = [];
         
@@ -181,11 +187,12 @@ serve(async (req) => {
             userId, 
             syncTime, 
             supabaseAdmin,
-            startTime
+            startTime,
+            includeDescriptions
         );
 
-        // Fusionar con datos existentes
-        const listingsToUpsert = mergeWithExistingData(processedListings, existingData || []);
+        // MEJORADO: Fusionar con datos existentes preservando configuración
+        const listingsToUpsert = mergeWithExistingData(processedListings, existingData || [], preserveConfig);
 
         // Guardar en base de datos
         if (listingsToUpsert.length > 0) {
@@ -202,7 +209,9 @@ serve(async (req) => {
             sync_type: syncType,
             total_processed: listingIds.length,
             message: `${listingsToUpsert.length} publicaciones ${syncType === 'complete' ? 'sincronizadas' : 'nuevas agregadas'}`,
-            duration: `${duration}s`
+            duration: `${duration}s`,
+            preserved_config: preserveConfig,
+            included_descriptions: includeDescriptions
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
@@ -249,23 +258,38 @@ async function getAllListingIds(meliUserId: string, accessToken: string, startTi
     return allListingIds;
 }
 
+// MEJORADA: Sincronización incremental más robusta
 async function getNewListingIds(meliUserId: string, accessToken: string, existingData: any[]): Promise<string[]> {
-    const url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?limit=50&offset=0&sort=date_desc`;
-    const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    
-    if (!response.ok) throw new Error("Failed to fetch recent listings from ML.");
-
-    const data = await response.json();
-    const recentIds = data.results || [];
-    
-    if (recentIds.length === 0) return [];
-
     const existingMeliIds = new Set(existingData.map(item => item.meli_id));
-    const newIds = recentIds.filter((id: string) => !existingMeliIds.has(id));
+    const newIds: string[] = [];
     
-    console.log(`Encontradas ${newIds.length} publicaciones nuevas de ${recentIds.length} revisadas`);
+    // Buscar en múltiples páginas para ser más completo
+    for (let offset = 0; offset < 200; offset += 50) {
+        const url = `https://api.mercadolibre.com/users/${meliUserId}/items/search?limit=50&offset=${offset}&sort=date_desc`;
+        const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        
+        if (!response.ok) {
+            console.warn(`Error fetching page ${offset/50 + 1}, continuing...`);
+            continue;
+        }
+
+        const data = await response.json();
+        const pageIds = data.results || [];
+        
+        if (pageIds.length === 0) break;
+
+        const pageNewIds = pageIds.filter((id: string) => !existingMeliIds.has(id));
+        newIds.push(...pageNewIds);
+        
+        // Si una página completa ya existe, probablemente no hay más nuevos
+        if (pageNewIds.length === 0) break;
+        
+        console.log(`Página ${offset/50 + 1}: ${pageNewIds.length} nuevas de ${pageIds.length} revisadas`);
+    }
+    
+    console.log(`Encontradas ${newIds.length} publicaciones nuevas en total`);
     return newIds;
 }
 
@@ -275,11 +299,17 @@ async function processListingDetails(
     userId: string, 
     syncTime: string,
     supabaseAdmin: SupabaseClient,
-    startTime: number
+    startTime: number,
+    includeDescriptions: boolean = false
 ): Promise<any[]> {
     const CHUNK_SIZE = 20;
     const rawMeliData: any[] = [];
-    const attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,pictures';
+    
+    // ✅ ARREGLADO: Incluir descriptions en attributesToFetch
+    let attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,pictures';
+    if (includeDescriptions) {
+        attributesToFetch += ',descriptions';
+    }
 
     // Obtener detalles de ML en lotes
     for (let i = 0; i < listingIds.length; i += CHUNK_SIZE) {
@@ -314,7 +344,7 @@ async function processListingDetails(
                 if (sku) allSkus.add(sku);
             }
         } else {
-            const sku = extractSku(body.attributes);
+            const sku = extractSku(body.attributes, undefined, body.seller_custom_field);
             if (sku) allSkus.add(sku);
         }
     }
@@ -328,6 +358,9 @@ async function processListingDetails(
     for (const itemWrapper of rawMeliData) {
         if (!itemWrapper.body || itemWrapper.code !== 200) continue;
         const body = itemWrapper.body;
+
+        // ✅ ARREGLADO: Extraer descripción si está disponible
+        const description = body.descriptions?.[0]?.plain_text || null;
 
         if (body.variations && body.variations.length > 0) {
             for (const variation of body.variations) {
@@ -351,13 +384,14 @@ async function processListingDetails(
                         listing_type_id: body.listing_type_id,
                         thumbnail_url: body.thumbnail,
                         pictures: body.pictures,
+                        description: description, // ✅ NUEVO: Incluir descripción
                         product_id: productInfo?.id || null,
-                        safety_stock: productInfo?.safety_stock || null
+                        safety_stock: productInfo?.safety_stock || 0 // ✅ MEJORADO: Default 0 en lugar de null
                     });
                 }
             }
         } else {
-            const sku = extractSku(body.attributes);
+            const sku = extractSku(body.attributes, undefined, body.seller_custom_field);
             
             if (sku) {
                 const productInfo = productMap.get(sku);
@@ -377,8 +411,9 @@ async function processListingDetails(
                     listing_type_id: body.listing_type_id,
                     thumbnail_url: body.thumbnail,
                     pictures: body.pictures,
+                    description: description, // ✅ NUEVO: Incluir descripción
                     product_id: productInfo?.id || null,
-                    safety_stock: productInfo?.safety_stock || null
+                    safety_stock: productInfo?.safety_stock || 0 // ✅ MEJORADO: Default 0 en lugar de null
                 });
             }
         }
@@ -387,7 +422,8 @@ async function processListingDetails(
     return processedListings;
 }
 
-function mergeWithExistingData(processedListings: any[], existingData: any[]): any[] {
+// ✅ MEJORADA: Preservar configuración del usuario, especialmente safety_stock
+function mergeWithExistingData(processedListings: any[], existingData: any[], preserveConfig: boolean = false): any[] {
     const existingDataMap = new Map();
     
     for (const item of existingData) {
@@ -399,19 +435,35 @@ function mergeWithExistingData(processedListings: any[], existingData: any[]): a
         const key = `${listing.meli_id}-${listing.meli_variation_id || 'null'}`;
         const existingItem = existingDataMap.get(key);
 
-        if (existingItem) {
+        if (existingItem && preserveConfig) {
+            // MODO PRESERVAR: Mantener toda la configuración del usuario
+            return {
+                ...listing,
+                prodflow_stock: existingItem.prodflow_stock || listing.available_quantity,
+                prodflow_price: existingItem.prodflow_price || listing.price,
+                sync_enabled: existingItem.sync_enabled === false ? false : true,
+                safety_stock: existingItem.safety_stock || listing.safety_stock || 0, // ✅ CRÍTICO: Preservar safety_stock
+                // Preservar descripción existente si la nueva está vacía
+                description: listing.description || existingItem.description || null
+            };
+        } else if (existingItem) {
+            // MODO NORMAL: Actualizar datos de ML pero preservar configuración clave
             return {
                 ...listing,
                 prodflow_stock: existingItem.prodflow_stock,
                 prodflow_price: existingItem.prodflow_price,
-                sync_enabled: existingItem.sync_enabled === false ? false : true
+                sync_enabled: existingItem.sync_enabled === false ? false : true,
+                safety_stock: existingItem.safety_stock || listing.safety_stock || 0, // ✅ CRÍTICO: Preservar safety_stock
+                description: listing.description || existingItem.description || null
             };
         } else {
+            // NUEVO ITEM: Usar valores por defecto
             return {
                 ...listing,
                 prodflow_stock: listing.available_quantity,
                 prodflow_price: listing.price,
-                sync_enabled: true
+                sync_enabled: true,
+                safety_stock: listing.safety_stock || 0 // ✅ MEJORADO: Asegurar default 0
             };
         }
     });

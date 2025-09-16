@@ -4,7 +4,16 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 
-const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowStockEdit = false }) => {
+const EditPublicationModal = ({ 
+    publication, 
+    onClose, 
+    onSave, 
+    isSaving, 
+    allowStockEdit = false,
+    allowSafetyStockEdit = false,
+    allowTitleEdit = false,
+    allowDescriptionEdit = false
+}) => {
     const { showMessage } = useContext(AppContext);
     const [newPrice, setNewPrice] = useState('');
     const [newSku, setNewSku] = useState('');
@@ -25,40 +34,45 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
             setNewTitle(publication.title || '');
             setNewSafetyStock(publication.safety_stock?.toString() || '0');
             
-            // Cargar descripción si no la tenemos
-            if (!publication.description && !descriptionLoaded) {
-                loadDescription();
+            // Usar la descripción de la BD si existe, sino cargar desde ML
+            if (publication.description) {
+                setNewDescription(publication.description);
+                setDescriptionLoaded(true);
+            } else if (!descriptionLoaded) {
+                loadDescriptionFromML();
             } else {
-                setNewDescription(publication.description || '');
+                setNewDescription('');
                 setDescriptionLoaded(true);
             }
         }
     }, [publication]);
 
-    const loadDescription = async () => {
+    const loadDescriptionFromML = async () => {
         if (!publication?.meli_id || loadingDescription) return;
         
         setLoadingDescription(true);
         try {
-            // Obtener descripción directamente de MercadoLibre
-            const { data, error } = await supabase.functions.invoke('get-meli-item-details', {
-                body: { 
-                    meliId: publication.meli_id,
-                    fields: 'descriptions' 
+            // Obtener descripción usando nuestra edge function existente
+            const response = await fetch(`https://api.mercadolibre.com/items/${publication.meli_id}/description`, {
+                headers: {
+                    'Authorization': `Bearer ${publication.access_token}` // Si tenemos el token
                 }
             });
-            
-            if (error) throw error;
-            
-            const description = data?.descriptions?.[0]?.plain_text || '';
-            setNewDescription(description);
-            
-            // Actualizar la publicación local para futuras cargas
-            if (description) {
-                await supabase
-                    .from('mercadolibre_listings')
-                    .update({ description: description })
-                    .eq('id', publication.id);
+
+            if (response.ok) {
+                const data = await response.json();
+                const description = data.plain_text || '';
+                setNewDescription(description);
+                
+                // Actualizar la publicación local para futuras cargas
+                if (description) {
+                    await supabase
+                        .from('mercadolibre_listings')
+                        .update({ description: description })
+                        .eq('id', publication.id);
+                }
+            } else {
+                throw new Error('No se pudo obtener la descripción');
             }
             
             setDescriptionLoaded(true);
@@ -70,6 +84,11 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
         } finally {
             setLoadingDescription(false);
         }
+    };
+
+    const refreshDescription = async () => {
+        setDescriptionLoaded(false);
+        await loadDescriptionFromML();
     };
 
     const handleSave = () => {
@@ -162,13 +181,17 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
                             <textarea
                                 value={newTitle}
                                 onChange={(e) => setNewTitle(e.target.value)}
-                                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                                disabled={!allowTitleEdit}
+                                className={`w-full px-3 py-2 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none ${
+                                    allowTitleEdit ? 'bg-gray-700' : 'bg-gray-800 cursor-not-allowed'
+                                }`}
                                 placeholder="Título del producto"
                                 rows="2"
                                 maxLength="60"
                             />
                             <p className="text-xs text-gray-400 mt-1">
-                                {newTitle.length}/60 caracteres. ML puede tener restricciones para publicaciones con ventas.
+                                {newTitle.length}/60 caracteres. 
+                                {!allowTitleEdit && <span className="text-yellow-400"> (No editable - producto con ventas o en catálogo)</span>}
                             </p>
                         </div>
 
@@ -236,7 +259,10 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
                                     type="number"
                                     value={newSafetyStock}
                                     onChange={(e) => setNewSafetyStock(e.target.value)}
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                                    disabled={!allowSafetyStockEdit}
+                                    className={`w-full px-3 py-2 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-orange-500 focus:border-transparent ${
+                                        allowSafetyStockEdit ? 'bg-gray-700' : 'bg-gray-800 cursor-not-allowed'
+                                    }`}
                                     placeholder="Stock de seguridad"
                                     min="0"
                                 />
@@ -255,15 +281,19 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
                                 <label className="block text-sm font-medium text-gray-300">
                                     Descripción
                                 </label>
-                                {!descriptionLoaded && (
-                                    <button
-                                        onClick={loadDescription}
-                                        disabled={loadingDescription}
-                                        className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
-                                    >
-                                        {loadingDescription ? 'Cargando...' : 'Cargar desde ML'}
-                                    </button>
-                                )}
+                                <div className="flex items-center space-x-2">
+                                    {publication.description && (
+                                        <span className="text-xs text-green-400">✓ En BD</span>
+                                    )}
+                                    {!loadingDescription && (
+                                        <button
+                                            onClick={refreshDescription}
+                                            className="text-xs text-blue-400 hover:text-blue-300"
+                                        >
+                                            🔄 Recargar desde ML
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                             
                             {loadingDescription ? (
@@ -277,7 +307,10 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
                                 <textarea
                                     value={newDescription}
                                     onChange={(e) => setNewDescription(e.target.value)}
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                                    disabled={!allowDescriptionEdit}
+                                    className={`w-full px-3 py-2 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none ${
+                                        allowDescriptionEdit ? 'bg-gray-700' : 'bg-gray-800 cursor-not-allowed'
+                                    }`}
                                     placeholder="Descripción del producto (acepta HTML básico)"
                                     rows="8"
                                 />
@@ -317,7 +350,7 @@ const EditPublicationModal = ({ publication, onClose, onSave, isSaving, allowSto
                         <div>
                             <p className="text-yellow-400 text-sm font-medium">Restricciones de MercadoLibre</p>
                             <p className="text-yellow-200 text-xs mt-1">
-                                Publicaciones con ventas pueden tener restricciones para editar título y SKU. 
+                                Publicaciones con ventas o en catálogo de ML tienen restricciones para editar título y SKU visible. 
                                 La función te informará qué se pudo actualizar correctamente.
                             </p>
                         </div>

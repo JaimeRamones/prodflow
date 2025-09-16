@@ -52,12 +52,14 @@ async function getRefreshedToken(refreshToken: string, userId: string): Promise<
   return data.access_token;
 }
 
-// NUEVA FUNCIÓN: Obtener información del producto para verificar sold_quantity
+// NUEVA FUNCIÓN: Obtener información del producto para verificar sold_quantity y restricciones
 async function getItemInfo(meliId: string, accessToken: string): Promise<{
   soldQuantity: number;
   hasDescription: boolean;
   currentTitle?: string;
   currentSku?: string;
+  familyName?: string;
+  hasCatalogRestrictions: boolean;
 }> {
   try {
     const response = await fetch(`https://api.mercadolibre.com/items/${meliId}`, {
@@ -65,7 +67,7 @@ async function getItemInfo(meliId: string, accessToken: string): Promise<{
     });
 
     if (!response.ok) {
-      return { soldQuantity: 0, hasDescription: false };
+      return { soldQuantity: 0, hasDescription: false, hasCatalogRestrictions: false };
     }
 
     const data = await response.json();
@@ -77,11 +79,13 @@ async function getItemInfo(meliId: string, accessToken: string): Promise<{
       soldQuantity: data.sold_quantity || 0,
       hasDescription: data.descriptions?.length > 0,
       currentTitle: data.title,
-      currentSku
+      currentSku,
+      familyName: data.family_name,
+      hasCatalogRestrictions: !!(data.family_name || data.catalog_product_id)
     };
   } catch (error) {
     console.warn('Error obteniendo info del item:', error);
-    return { soldQuantity: 0, hasDescription: false };
+    return { soldQuantity: 0, hasDescription: false, hasCatalogRestrictions: false };
   }
 }
 
@@ -150,12 +154,15 @@ async function updateMeliItem(
       // Manejar errores específicos por campo
       if (status === 400 && errorBody?.cause) {
         for (const cause of errorBody.cause) {
+          // Verificar que cause.message existe antes de usar includes()
+          const causeMessage = cause.message || '';
+          
           // Error de precio mínimo
           if (cause.code === 'item.price.invalid') {
-            const match = cause.message.match(/\$ (\d+)/);
+            const match = causeMessage.match(/\$ (\d+)/);
             if (match && match[1]) {
               const minPrice = parseInt(match[1], 10);
-              console.warn(`Precio bajo para ${meliId}. ML exige > $${minPrice}. Reintentando con precio mínimo.`);
+              console.warn(`Precio bajo para ${meliId}. ML exige > ${minPrice}. Reintentando con precio mínimo.`);
               
               const newPayload = JSON.parse(JSON.stringify(payload));
               if (newPayload.variations && newPayload.variations.length > 0) {
@@ -174,16 +181,19 @@ async function updateMeliItem(
               });
               
               if (retryResponse.ok) {
-                warnings.push(`Precio ajustado automáticamente al mínimo permitido: $${minPrice}`);
+                warnings.push(`Precio ajustado automáticamente al mínimo permitido: ${minPrice}`);
                 return { success: true, warnings };
               }
             }
           }
           
-          // Errores de título/SKU por ventas
-          if (cause.message.includes('sold_quantity') || cause.message.includes('not_modifiable')) {
+          // Errores de título/SKU por ventas - con validación segura
+          if (causeMessage.includes('sold_quantity') || causeMessage.includes('not_modifiable')) {
             warnings.push(`Campo no modificable: producto con ventas (sold_quantity > 0)`);
           }
+          
+          // Log adicional para debug
+          console.error(`Causa específica: ${JSON.stringify(cause)}`);
         }
       }
 
@@ -266,8 +276,8 @@ serve(async (req) => {
 
     // NUEVO: Obtener información del producto para tomar decisiones inteligentes
     const itemInfo = await getItemInfo(meliId, accessToken);
-    console.log(`📊 Info del producto - Vendidos: ${itemInfo.soldQuantity}, SKU actual: ${itemInfo.currentSku}`);
-
+    console.log(`📊 Info del producto - Vendidos: ${itemInfo.soldQuantity}, SKU actual: ${itemInfo.currentSku}, Catálogo: ${itemInfo.hasCatalogRestrictions}, Family: ${itemInfo.familyName}`);
+    
     // Construir el payload de actualización
     const payload: any = {};
     const updatedFields: string[] = [];
@@ -331,15 +341,21 @@ serve(async (req) => {
       }
     }
 
-    // MANEJO INTELIGENTE DE TÍTULO: Basado en sold_quantity
+    // MANEJO INTELIGENTE DE TÍTULO: Múltiples restricciones
     if (title !== undefined && title !== null && title.toString().trim() !== '') {
-      if (itemInfo.soldQuantity === 0) {
-        payload.title = title.toString().trim();
-        updatedFields.push('título');
-        console.log(`📝 Título actualizado: ${title} (sin ventas)`);
-      } else {
+      const titleValue = title.toString().trim();
+      console.log(`📝 Intentando actualizar título: "${titleValue}" (sold_quantity: ${itemInfo.soldQuantity}, catálogo: ${itemInfo.hasCatalogRestrictions})`);
+      
+      if (itemInfo.soldQuantity > 0) {
         warnings.push(`Título no actualizado - producto con ventas (${itemInfo.soldQuantity} vendidos) no permite modificar título`);
         console.warn(`⚠️ Título no actualizable: ${itemInfo.soldQuantity} ventas`);
+      } else if (itemInfo.hasCatalogRestrictions) {
+        warnings.push(`Título no actualizado - producto asociado a catálogo de MercadoLibre (family_name: ${itemInfo.familyName || 'presente'}) no permite modificar título`);
+        console.warn(`⚠️ Título no actualizable: producto en catálogo`);
+      } else {
+        payload.title = titleValue;
+        updatedFields.push('título');
+        console.log(`📝 Título incluido en payload: ${titleValue} (producto libre)`);
       }
     }
 
@@ -450,8 +466,13 @@ serve(async (req) => {
       warnings: warnings,
       itemInfo: {
         soldQuantity: itemInfo.soldQuantity,
-        canModifyTitle: itemInfo.soldQuantity === 0,
-        canModifyVisibleSku: itemInfo.soldQuantity === 0
+        canModifyTitle: itemInfo.soldQuantity === 0 && !itemInfo.hasCatalogRestrictions,
+        canModifyVisibleSku: itemInfo.soldQuantity === 0,
+        hasCatalogRestrictions: itemInfo.hasCatalogRestrictions,
+        familyName: itemInfo.familyName,
+        titleRestrictionReason: itemInfo.soldQuantity > 0 ? 'Producto con ventas' : 
+                              itemInfo.hasCatalogRestrictions ? 'Producto en catálogo ML' : 
+                              'Sin restricciones'
       }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
