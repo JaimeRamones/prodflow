@@ -383,7 +383,6 @@ const PublicationsView = () => {
                     meliId: currentPub.meli_id,
                     variationId: currentPub.meli_variation_id,
                     availableQuantity: newAvailableStock,
-                    sku: currentPub.sku
                 };
                 
                 if (newStatus !== currentPub.status) {
