@@ -35,7 +35,7 @@ const InFlow = () => {
     const fetchPublications = useCallback(async () => {
         setIsLoading(true);
         // Asegúrate que tu tabla en Supabase se llame 'publications'
-        const { data, error } = await supabase.from('publications').select('*').order('created_at', { ascending: false });
+        const { data, error } = await supabase.from('mercadolibre_listings').select('*').order('created_at', { ascending: false });
         if (error) {
             showMessage('Error al cargar publicaciones', 'error');
         } else {
