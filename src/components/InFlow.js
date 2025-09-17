@@ -289,13 +289,14 @@ const InFlow = () => {
 
                 return {
                     'Id': pub.meli_id || pub.id,
-                    'Vendedor': '', // Se puede agregar si tienes este dato
+                    'Vendedor': '', 
                     'Tienda Oficial': '',
                     'Categoría': pub.category_id || '',
                     'Titulo': pub.title || '',
-                    'Descripción': '', // Agregar si tienes este campo
+                    'Descripción': '', 
                     'Precio': pub.price || 0,
                     'Descuento': '0%',
+                    'Descuento Nivel 3 al 6': '0%',
                     'Descuento Nivel 1 y 2': '0%',
                     'Descuento Fecha Desde': '',
                     'Descuento Fecha Hasta': '',
@@ -309,7 +310,7 @@ const InFlow = () => {
                     'Disponibilidad de stock': 0,
                     'Tipo de Publicación': pub.listing_type_id || 'gold_special',
                     'Condición': 'Nuevo',
-                    'Envio Gratis': '', // Agregar lógica si tienes este dato
+                    'Envio Gratis': 'No',
                     'Precio Envio Gratis': '',
                     'Modo Envio': 'MercadoEnvios2',
                     'Metodo Envio': 'Normal a domicilio',
@@ -364,29 +365,63 @@ const InFlow = () => {
                     'Variación Código universal de producto': '',
                     'Atributo Marca': brand,
                     'Atributo Línea': '',
-                    'Atributo Modelo': model
+                    'Atributo Modelo': model,
+                    'IVA': '21%', // Columna que faltaba
+                    'Impuesto Interno': '0%' // Columna que faltaba
                 };
             });
 
             // Crear workbook con estructura Integraly
             const workbook = XLSX.utils.book_new();
             
-            // Crear hoja de ayuda
+            // Crear hoja de ayuda con formato profesional
             const helpData = [
-                ['INSTRUCCIONES DE USO'],
+                ['INTEGRALY - MERCADOLIBRE EXCEL ADD-IN'],
                 [''],
-                ['1. Este archivo está en formato Integraly para MercadoLibre'],
-                ['2. Puedes editar los campos y reimportar el archivo'],
-                ['3. Los campos obligatorios son: Titulo, Categoría, Precio, Stock'],
-                ['4. Las categorías deben ser IDs válidos de MercadoLibre (ej: MLA1132)'],
-                ['5. Las imágenes deben ser URLs públicas'],
-                ['6. Para más información visita: https://integraly.com'],
+                ['INSTRUCCIONES DE USO:'],
+                ['• Este archivo está en formato Integraly para MercadoLibre'],
+                ['• Puede editar los campos y reimportar el archivo'],
+                ['• Los campos obligatorios son: Titulo, Categoría, Precio, Stock'],
+                ['• Las categorías deben ser IDs válidos de MercadoLibre (ej: MLA1132)'],
+                ['• Las imágenes deben ser URLs públicas'],
+                ['• Para agregar variaciones, duplique la fila y cambie solo los atributos de variación'],
                 [''],
-                ['FECHA DE EXPORTACIÓN:', new Date().toLocaleString('es-AR')],
-                ['TOTAL DE PUBLICACIONES:', integraly_data.length]
+                ['CAMPOS IMPORTANTES:'],
+                ['• IVA: Porcentaje de IVA aplicable (21% por defecto en Argentina)'],
+                ['• Impuesto Interno: Porcentaje de impuesto interno (0% por defecto)'],
+                ['• SKU: Código de identificación propio del vendedor'],
+                ['• Atributos: Completar según la categoría del producto'],
+                [''],
+                ['INFORMACIÓN DE EXPORTACIÓN:'],
+                ['Fecha de exportación:', new Date().toLocaleString('es-AR')],
+                ['Total de publicaciones:', integraly_data.length],
+                ['Usuario:', 'ProdFlow Export'],
+                [''],
+                ['Para más información visite: https://integraly.com'],
+                ['Soporte técnico: soporte@integraly.com']
             ];
             
             const helpSheet = XLSX.utils.aoa_to_sheet(helpData);
+            
+            // Aplicar formato a la hoja de ayuda
+            const helpRange = XLSX.utils.decode_range(helpSheet['!ref']);
+            for (let R = helpRange.s.r; R <= helpRange.e.r; ++R) {
+                for (let C = helpRange.s.c; C <= helpRange.e.c; ++C) {
+                    const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+                    if (!helpSheet[cellRef]) continue;
+                    
+                    // Estilo para títulos principales
+                    if (R === 0 || R === 2 || R === 10 || R === 16) {
+                        helpSheet[cellRef].s = {
+                            font: { bold: true, color: { rgb: "FFFFFF" } },
+                            fill: { fgColor: { rgb: "4472C4" } },
+                            alignment: { horizontal: "left" }
+                        };
+                    }
+                }
+            }
+            
+            helpSheet['!cols'] = [{ wch: 50 }, { wch: 30 }];
             XLSX.utils.book_append_sheet(workbook, helpSheet, 'Ayuda');
 
             // Agrupar por categoría para crear hojas separadas
@@ -397,30 +432,149 @@ const InFlow = () => {
                 return acc;
             }, {});
 
-            // Crear una hoja por categoría (máximo 10 para no sobrecargar)
+            // Crear una hoja por categoría con formato profesional
             const categories = Object.keys(groupedByCategory).slice(0, 10);
             categories.forEach(category => {
                 const categoryData = groupedByCategory[category];
                 const worksheet = XLSX.utils.json_to_sheet(categoryData);
                 
-                // Ajustar ancho de columnas para mejor visualización
+                // Aplicar filtros automáticos
+                const range = XLSX.utils.decode_range(worksheet['!ref']);
+                worksheet['!autofilter'] = { ref: worksheet['!ref'] };
+                
+                // Formatear cabeceras
+                for (let C = range.s.c; C <= range.e.c; ++C) {
+                    const headerCell = XLSX.utils.encode_cell({ r: 0, c: C });
+                    if (worksheet[headerCell]) {
+                        worksheet[headerCell].s = {
+                            font: { bold: true, color: { rgb: "FFFFFF" } },
+                            fill: { fgColor: { rgb: "4472C4" } },
+                            alignment: { horizontal: "center" },
+                            border: {
+                                top: { style: "thin", color: { rgb: "000000" } },
+                                bottom: { style: "thin", color: { rgb: "000000" } },
+                                left: { style: "thin", color: { rgb: "000000" } },
+                                right: { style: "thin", color: { rgb: "000000" } }
+                            }
+                        };
+                    }
+                }
+                
+                // Formatear filas de datos con colores alternos
+                for (let R = 1; R <= range.e.r; ++R) {
+                    for (let C = range.s.c; C <= range.e.c; ++C) {
+                        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+                        if (worksheet[cellRef]) {
+                            worksheet[cellRef].s = {
+                                fill: { fgColor: { rgb: R % 2 === 0 ? "F2F2F2" : "FFFFFF" } },
+                                border: {
+                                    top: { style: "thin", color: { rgb: "E0E0E0" } },
+                                    bottom: { style: "thin", color: { rgb: "E0E0E0" } },
+                                    left: { style: "thin", color: { rgb: "E0E0E0" } },
+                                    right: { style: "thin", color: { rgb: "E0E0E0" } }
+                                },
+                                alignment: { vertical: "center" }
+                            };
+                            
+                            // Formato especial para columnas numéricas
+                            if (C === 6) { // Precio
+                                worksheet[cellRef].s.numFmt = '"$"#,##0.00';
+                                worksheet[cellRef].s.alignment.horizontal = "right";
+                            }
+                            if (C === 19) { // Stock
+                                worksheet[cellRef].s.numFmt = '#,##0';
+                                worksheet[cellRef].s.alignment.horizontal = "center";
+                            }
+                        }
+                    }
+                }
+                
+                // Ajustar ancho de columnas profesionalmente
                 const colWidths = [
                     {wch: 15}, // Id
                     {wch: 20}, // Vendedor  
                     {wch: 15}, // Tienda Oficial
                     {wch: 30}, // Categoría
-                    {wch: 50}, // Titulo
-                    {wch: 30}, // Descripción
-                    {wch: 10}, // Precio
+                    {wch: 60}, // Titulo
+                    {wch: 40}, // Descripción
+                    {wch: 12}, // Precio
                     {wch: 10}, // Descuento
+                    {wch: 15}, // Descuento Nivel 3 al 6
                     {wch: 15}, // Descuento Nivel 1 y 2
                     {wch: 15}, // Descuento Fecha Desde
                     {wch: 15}, // Descuento Fecha Hasta
                     {wch: 8},  // Moneda
-                    {wch: 10}, // Comisión
-                    {wch: 20}, // SKU
+                    {wch: 12}, // Comisión
+                    {wch: 25}, // SKU
+                    {wch: 20}, // seller_custom_field
+                    {wch: 12}, // Estado
+                    {wch: 10}, // Stock
+                    {wch: 15}, // Disponibilidad de stock
+                    {wch: 20}, // Tipo de Publicación
+                    {wch: 12}, // Condición
+                    {wch: 12}, // Envio Gratis
+                    {wch: 15}, // Precio Envio Gratis
+                    {wch: 15}, // Modo Envio
+                    {wch: 20}, // Metodo Envio
+                    {wch: 15}, // Retira en Persona
+                    {wch: 12}, // Envio FLEX
+                    {wch: 25}, // Garantia
+                    {wch: 18}, // Fecha Creación
+                    {wch: 18}, // Última Actualización
+                    {wch: 12}, // Resultado
+                    {wch: 30}, // Resultado Observaciones
+                    {wch: 50}, // Imagen 1
+                    {wch: 50}, // Imagen 2
+                    {wch: 50}, // Imagen 3
+                    {wch: 50}, // Imagen 4
+                    {wch: 50}, // Imagen 5
+                    {wch: 50}, // Imagen 6
+                    {wch: 50}, // Imagen 7
+                    {wch: 50}, // Imagen 8
+                    {wch: 50}, // Imagen 9
+                    {wch: 50}, // Imagen 10
+                    {wch: 30}, // Video
+                    {wch: 20}, // Canal de Publicación Exclusivo
+                    {wch: 10}, // Visitas
+                    {wch: 10}, // Vendidos
+                    {wch: 25}, // Tags
+                    {wch: 12}, // Ahora 12
+                    {wch: 50}, // URL Publicación
+                    {wch: 20}, // Calidad de la Publicación
+                    {wch: 20}, // Calidad de la Imagen
+                    {wch: 40}, // Mejoras pendientes
+                    {wch: 15}, // Campaña
+                    {wch: 15}, // Publicidad
+                    {wch: 20}, // Estado Ficha Técnica
+                    {wch: 20}, // Item de Catálogo
+                    {wch: 15}, // Dominio
+                    {wch: 30}, // Estado Para Participar en Catálogo
+                    {wch: 20}, // Participar en Catálogo
+                    {wch: 15}, // Catálogo Estado
+                    {wch: 12}, // Catálogo Precio
+                    {wch: 20}, // Catálogo SKU
+                    {wch: 25}, // Catálogo Tipo De Publicación
+                    {wch: 20}, // Catálogo Modo Envio
+                    {wch: 20}, // Catálogo Metodo Envio
+                    {wch: 20}, // Catálogo Envio Gratis
+                    {wch: 20}, // Catálogo Retira en Persona
+                    {wch: 20}, // Catálogo Garantía
+                    {wch: 20}, // Catálogo Para Ganar
+                    {wch: 25}, // Catálogo Código Universal
+                    {wch: 20}, // Ubicación
+                    {wch: 25}, // Domicilio
+                    {wch: 15}, // Variación Color
+                    {wch: 25}, // Variación Código universal de producto
+                    {wch: 20}, // Atributo Marca
+                    {wch: 20}, // Atributo Línea
+                    {wch: 20}, // Atributo Modelo
+                    {wch: 10}, // IVA
+                    {wch: 15}  // Impuesto Interno
                 ];
                 worksheet['!cols'] = colWidths;
+                
+                // Congelar primera fila (cabeceras)
+                worksheet['!freeze'] = { xSplit: 0, ySplit: 1 };
                 
                 // Nombre de hoja limitado a 31 caracteres
                 const sheetName = category.substring(0, 31);
@@ -430,11 +584,22 @@ const InFlow = () => {
             // Si todas las publicaciones están sin categoría, crear una hoja general
             if (categories.length === 1 && categories[0] === 'Sin Categoría') {
                 const worksheet = XLSX.utils.json_to_sheet(integraly_data);
+                
+                // Aplicar mismo formato profesional
+                const range = XLSX.utils.decode_range(worksheet['!ref']);
+                worksheet['!autofilter'] = { ref: worksheet['!ref'] };
+                worksheet['!freeze'] = { xSplit: 0, ySplit: 1 };
+                
                 XLSX.utils.book_append_sheet(workbook, worksheet, 'Todas las Publicaciones');
             }
 
             // Generar archivo y descargar
-            const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+            const excelBuffer = XLSX.write(workbook, { 
+                bookType: 'xlsx', 
+                type: 'array',
+                cellStyles: true,
+                bookSST: false
+            });
             const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
             
             const url = window.URL.createObjectURL(blob);
@@ -444,7 +609,7 @@ const InFlow = () => {
             link.click();
             window.URL.revokeObjectURL(url);
 
-            showMessage(`Exportación completada: ${integraly_data.length} publicaciones en formato Integraly`, 'success');
+            showMessage(`Exportación completada: ${integraly_data.length} publicaciones en formato Integraly profesional`, 'success');
         } catch (err) {
             console.error('Error en exportación:', err);
             showMessage(`Error en la exportación: ${err.message}`, 'error');
