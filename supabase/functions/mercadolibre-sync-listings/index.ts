@@ -305,8 +305,8 @@ async function processListingDetails(
     const CHUNK_SIZE = 20;
     const rawMeliData: any[] = [];
     
-    // ✅ ARREGLADO: Incluir descriptions en attributesToFetch
-    let attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,pictures';
+    // ✅ MODIFICADO: Incluir shipping y descriptions en attributesToFetch
+    let attributesToFetch = 'id,title,price,variations,attributes,permalink,available_quantity,sold_quantity,status,listing_type_id,thumbnail,pictures,shipping';
     if (includeDescriptions) {
         attributesToFetch += ',descriptions';
     }
@@ -361,6 +361,20 @@ async function processListingDetails(
 
         // ✅ ARREGLADO: Extraer descripción si está disponible
         const description = body.descriptions?.[0]?.plain_text || null;
+        
+        // ✅ NUEVO: Extraer URLs de imágenes del array de pictures
+        const pictures = body.pictures || [];
+        const imageUrls = pictures.map((pic: any) => pic.secure_url || pic.url).filter(Boolean);
+
+        // ✅ NUEVO: Extraer atributos adicionales
+        const attributes = body.attributes || [];
+        const brandAttr = attributes.find((attr: any) => attr.id === 'BRAND');
+        const modelAttr = attributes.find((attr: any) => attr.id === 'MODEL');
+
+        // ✅ NUEVO: Extraer datos reales de envío
+        const shipping = body.shipping || {};
+        const shippingFree = shipping.free_shipping || false;
+        const shippingMode = shipping.mode || 'not_specified';
 
         if (body.variations && body.variations.length > 0) {
             for (const variation of body.variations) {
@@ -384,7 +398,29 @@ async function processListingDetails(
                         listing_type_id: body.listing_type_id,
                         thumbnail_url: body.thumbnail,
                         pictures: body.pictures,
-                        description: description, // ✅ NUEVO: Incluir descripción
+                        description: description, // ✅ INCLUIR: descripción
+                        
+                        // ✅ NUEVAS COLUMNAS DE IMÁGENES
+                        image_2: imageUrls[1] || null,
+                        image_3: imageUrls[2] || null,
+                        image_4: imageUrls[3] || null,
+                        image_5: imageUrls[4] || null,
+                        image_6: imageUrls[5] || null,
+                        image_7: imageUrls[6] || null,
+                        image_8: imageUrls[7] || null,
+                        image_9: imageUrls[8] || null,
+                        image_10: imageUrls[9] || null,
+                        
+                        // ✅ NUEVOS CAMPOS ADICIONALES
+                        brand: brandAttr?.value_name || null,
+                        model: modelAttr?.value_name || null,
+                        warranty: 'Garantía del vendedor: 30 días',
+                        shipping_free: shippingFree, // ✅ CORREGIDO: usar datos reales
+                        shipping_mode: shippingMode, // ✅ CORREGIDO: usar datos reales
+                        visits: 0,
+                        iva: '21%',
+                        impuesto_interno: '0%',
+                        
                         product_id: productInfo?.id || null,
                         safety_stock: productInfo?.safety_stock || 0 // ✅ MEJORADO: Default 0 en lugar de null
                     });
@@ -411,7 +447,29 @@ async function processListingDetails(
                     listing_type_id: body.listing_type_id,
                     thumbnail_url: body.thumbnail,
                     pictures: body.pictures,
-                    description: description, // ✅ NUEVO: Incluir descripción
+                    description: description, // ✅ INCLUIR: descripción
+                    
+                    // ✅ NUEVAS COLUMNAS DE IMÁGENES
+                    image_2: imageUrls[1] || null,
+                    image_3: imageUrls[2] || null,
+                    image_4: imageUrls[3] || null,
+                    image_5: imageUrls[4] || null,
+                    image_6: imageUrls[5] || null,
+                    image_7: imageUrls[6] || null,
+                    image_8: imageUrls[7] || null,
+                    image_9: imageUrls[8] || null,
+                    image_10: imageUrls[9] || null,
+                    
+                    // ✅ NUEVOS CAMPOS ADICIONALES
+                    brand: brandAttr?.value_name || null,
+                    model: modelAttr?.value_name || null,
+                    warranty: 'Garantía del vendedor: 30 días',
+                    shipping_free: shippingFree, // ✅ CORREGIDO: usar datos reales
+                    shipping_mode: shippingMode, // ✅ CORREGIDO: usar datos reales
+                    visits: 0,
+                    iva: '21%',
+                    impuesto_interno: '0%',
+                    
                     product_id: productInfo?.id || null,
                     safety_stock: productInfo?.safety_stock || 0 // ✅ MEJORADO: Default 0 en lugar de null
                 });

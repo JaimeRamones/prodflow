@@ -329,7 +329,7 @@ const ExportModal = ({ isOpen, onClose }) => {
 
             if (error) throw error;
 
-            // Transformar datos según campos seleccionados
+            // ✅ TRANSFORMACIÓN ACTUALIZADA - Usar columnas directas de la BD
             const exportData = data.map(pub => {
                 const row = {};
                 
@@ -345,6 +345,10 @@ const ExportModal = ({ isOpen, onClose }) => {
                             case 'titulo':
                                 row[label] = pub.title || '';
                                 break;
+                            case 'descripcion':
+                                // ✅ Usar columna directa
+                                row[label] = pub.description || '';
+                                break;
                             case 'precio':
                                 row[label] = pub.price || 0;
                                 break;
@@ -359,34 +363,48 @@ const ExportModal = ({ isOpen, onClose }) => {
                                 row[label] = pub.category_id || '';
                                 break;
                             case 'sku':
-                                // Extraer SKU de atributos si existe
-                                try {
-                                    const attrs = typeof pub.attributes === 'string' ? 
-                                        JSON.parse(pub.attributes) : pub.attributes;
-                                    const skuAttr = attrs?.find?.(a => a.id === 'SELLER_SKU');
-                                    row[label] = skuAttr?.value_name || pub.sku || '';
-                                } catch {
-                                    row[label] = pub.sku || '';
-                                }
+                                // ✅ Usar columna directa primero
+                                row[label] = pub.sku || '';
                                 break;
                             case 'atributo_marca':
-                                try {
-                                    const attrs = typeof pub.attributes === 'string' ? 
-                                        JSON.parse(pub.attributes) : pub.attributes;
-                                    const brandAttr = attrs?.find?.(a => a.id === 'BRAND');
-                                    row[label] = brandAttr?.value_name || '';
-                                } catch {
-                                    row[label] = '';
-                                }
+                                // ✅ Usar columna directa
+                                row[label] = pub.brand || '';
+                                break;
+                            case 'atributo_modelo':
+                                // ✅ Usar columna directa
+                                row[label] = pub.model || '';
                                 break;
                             case 'imagen_1':
-                                try {
-                                    const pics = typeof pub.pictures === 'string' ? 
-                                        JSON.parse(pub.pictures) : pub.pictures;
-                                    row[label] = pics?.[0]?.url || pics?.[0] || pub.thumbnail_url || '';
-                                } catch {
-                                    row[label] = pub.thumbnail_url || '';
-                                }
+                                // ✅ Usar thumbnail_url como imagen principal
+                                row[label] = pub.thumbnail_url || '';
+                                break;
+                            // ✅ IMÁGENES 2-10 - Usar columnas directas
+                            case 'imagen_2':
+                                row[label] = pub.image_2 || '';
+                                break;
+                            case 'imagen_3':
+                                row[label] = pub.image_3 || '';
+                                break;
+                            case 'imagen_4':
+                                row[label] = pub.image_4 || '';
+                                break;
+                            case 'imagen_5':
+                                row[label] = pub.image_5 || '';
+                                break;
+                            case 'imagen_6':
+                                row[label] = pub.image_6 || '';
+                                break;
+                            case 'imagen_7':
+                                row[label] = pub.image_7 || '';
+                                break;
+                            case 'imagen_8':
+                                row[label] = pub.image_8 || '';
+                                break;
+                            case 'imagen_9':
+                                row[label] = pub.image_9 || '';
+                                break;
+                            case 'imagen_10':
+                                row[label] = pub.image_10 || '';
                                 break;
                             case 'vendidos':
                                 row[label] = pub.sold_quantity || 0;
@@ -394,14 +412,61 @@ const ExportModal = ({ isOpen, onClose }) => {
                             case 'fecha_creacion':
                                 row[label] = pub.created_at || '';
                                 break;
+                            case 'ultima_actualizacion':
+                                row[label] = pub.last_synced_at || '';
+                                break;
                             case 'moneda':
                                 row[label] = 'ARS';
                                 break;
                             case 'iva':
-                                row[label] = '21%';
+                                // ✅ Usar columna directa
+                                row[label] = pub.iva || '21%';
+                                break;
+                            case 'impuesto_interno':
+                                // ✅ Usar columna directa  
+                                row[label] = pub.impuesto_interno || '0%';
+                                break;
+                            case 'garantia':
+                                // ✅ Usar columna directa
+                                row[label] = pub.warranty || '';
+                                break;
+                            case 'envio_gratis':
+                                // ✅ Usar columna directa
+                                row[label] = pub.shipping_free ? 'Sí' : 'No';
+                                break;
+                            case 'modo_envio':
+                                // ✅ Usar columna directa
+                                row[label] = pub.shipping_mode || '';
+                                break;
+                            case 'visitas':
+                                // ✅ Usar columna directa
+                                row[label] = pub.visits || 0;
+                                break;
+                            case 'tipo_publicacion':
+                                row[label] = pub.listing_type_id || '';
+                                break;
+                            case 'url_publicacion':
+                                row[label] = pub.permalink || '';
+                                break;
+                            case 'condicion':
+                                row[label] = 'new';
+                                break;
+                            // Campos que no están en la BD
+                            case 'vendedor':
+                            case 'tienda_oficial':
+                            case 'comision':
+                            case 'descuento':
+                            case 'video':
+                            case 'tags':
+                            case 'ahora_12':
+                            case 'calidad_publicacion':
+                            case 'mejoras_pendientes':
+                            case 'campana':
+                            case 'publicidad':
+                                row[label] = '';
                                 break;
                             default:
-                                row[label] = ''; // Valores por defecto para otros campos
+                                row[label] = '';
                         }
                     }
                 });
@@ -484,7 +549,7 @@ const ExportModal = ({ isOpen, onClose }) => {
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `prodflow_export_${new Date().toISOString().split('T')[0]}.xlsx`;
+            link.download = `inflow_export_${new Date().toISOString().split('T')[0]}.xlsx`;
             link.click();
             window.URL.revokeObjectURL(url);
 

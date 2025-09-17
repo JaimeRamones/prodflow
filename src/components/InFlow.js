@@ -109,6 +109,7 @@ const InFlow = () => {
     const [publications, setPublications] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isImporting, setIsImporting] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
     const [editingPublication, setEditingPublication] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -153,6 +154,37 @@ const InFlow = () => {
         }
         setIsLoading(false);
     }, [showMessage, itemsPerPage]);
+
+    const handleSync = useCallback(async () => {
+        setIsSyncing(true);
+        showMessage('Iniciando sincronización completa...', 'info');
+        
+        try {
+            // ✅ LLAMADA CORREGIDA - Con includeDescriptions activado
+            const { data, error } = await supabase.functions.invoke('sync-mercadolibre', {
+                body: { 
+                    includeDescriptions: true,  // Activar descripciones
+                    preserveConfig: false 
+                }
+            });
+
+            if (error) throw error;
+
+            if (data.success) {
+                showMessage(`Sincronización exitosa: ${data.message}`, 'success');
+                // Refrescar datos después de la sincronización
+                await fetchPublications(currentPage, searchTerm);
+            } else {
+                throw new Error(data.error || 'Error desconocido en sincronización');
+            }
+            
+        } catch (err) {
+            console.error('Error en sincronización:', err);
+            showMessage(`Error en sincronización: ${err.message}`, 'error');
+        } finally {
+            setIsSyncing(false);
+        }
+    }, [currentPage, searchTerm, showMessage]);
 
     useEffect(() => {
         fetchPublications(currentPage, searchTerm);
@@ -272,11 +304,12 @@ const InFlow = () => {
                     </div>
                     <div className="flex items-center space-x-2 mt-4 sm:mt-0 flex-wrap gap-2">
                         <button 
-                            onClick={() => fetchPublications(currentPage, searchTerm)} 
-                            className="flex items-center gap-2 px-4 py-2 bg-gray-700 rounded-md hover:bg-gray-600 transition-colors"
+                            onClick={handleSync}
+                            disabled={isSyncing}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-700 rounded-md hover:bg-gray-600 transition-colors disabled:opacity-50"
                         >
-                            <FiRefreshCw className={isLoading ? 'animate-spin' : ''} /> 
-                            Sincronizar
+                            <FiRefreshCw className={isSyncing ? 'animate-spin' : ''} /> 
+                            {isSyncing ? 'Sincronizando...' : 'Sincronizar'}
                         </button>
                         
                         <input 
@@ -371,7 +404,7 @@ const InFlow = () => {
                                                 <td className="p-4">
                                                     <div className="flex items-center gap-4">
                                                         <img 
-                                                            src={pub.pictures?.[0]?.url || pub.thumbnail || 'https://via.placeholder.com/150'} 
+                                                            src={pub.thumbnail_url || 'https://via.placeholder.com/150'} 
                                                             alt={pub.title} 
                                                             className="w-12 h-12 rounded-md object-cover bg-gray-600" 
                                                             onError={(e) => {
@@ -383,22 +416,19 @@ const InFlow = () => {
                                                                 {pub.title}
                                                             </p>
                                                             <p className="text-xs text-gray-400 font-mono">
-                                                                {pub.id || pub.meli_id}
+                                                                {pub.meli_id}
                                                             </p>
                                                         </div>
                                                     </div>
                                                 </td>
                                                 <td className="p-4 text-sm font-mono text-gray-300">
-                                                    {pub.attributes?.find(a => a.id === 'SELLER_SKU')?.value_name || 
-                                                     pub.sku || 
-                                                     pub.seller_sku || 
-                                                     'N/A'}
+                                                    {pub.sku || 'N/A'}
                                                 </td>
                                                 <td className="p-4 text-sm text-gray-300">
                                                     ${(pub.price || 0).toLocaleString('es-AR')}
                                                 </td>
                                                 <td className="p-4 text-sm font-bold text-gray-300">
-                                                    {pub.available_quantity || pub.stock || 0}
+                                                    {pub.available_quantity || 0}
                                                 </td>
                                                 <td className="p-4">
                                                     <StatusPill status={pub.status || 'active'} />
