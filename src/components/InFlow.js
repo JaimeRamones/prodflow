@@ -4,9 +4,10 @@ import React, { useState, useEffect, useCallback, useContext, useMemo } from 're
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import EditPublicationModal from './EditPublicationModal';
+import ExportModal from './ExportModal'; // ✅ Nuevo import
 import { SyncLoader } from 'react-spinners';
 import * as XLSX from 'xlsx';
-import { FiUpload, FiDownload, FiPlus, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight } from "react-icons/fi";
+import { FiUpload, FiDownload, FiPlus, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiSettings } from "react-icons/fi";
 
 // --- Componentes de UI Internos para un look profesional ---
 const StatusPill = ({ status }) => {
@@ -112,6 +113,7 @@ const InFlow = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedPublications, setSelectedPublications] = useState(new Set());
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false); // ✅ Nuevo estado
     
     // Estados para paginación
     const [currentPage, setCurrentPage] = useState(1);
@@ -667,7 +669,7 @@ const InFlow = () => {
                             onClick={handleExport} 
                             className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
                         >
-                            <FiDownload /> Exportar Excel
+                            <FiSettings /> Exportar Avanzado
                         </button>
                         
                         <button 
@@ -804,6 +806,12 @@ const InFlow = () => {
                         isSaving={isSaving} 
                     />
                 )}
+
+                {/* Modal de exportación avanzada */}
+                <ExportModal 
+                    isOpen={isExportModalOpen} 
+                    onClose={() => setIsExportModalOpen(false)} 
+                />
             </div>
         </div>
     );
