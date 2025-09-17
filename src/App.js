@@ -1,7 +1,6 @@
 // Ruta: src/App.js
 
 import React, { useState, useEffect, useContext, createContext, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 
 // Importaciones de Componentes (verificadas y completas)
@@ -16,28 +15,20 @@ import MovementHistory from './components/MovementHistory';
 import Tools from './components/Tools';
 import Integrations from './components/Integrations';
 import PublicationsView from './components/PublicationsView';
-import InFlow from './components/InFlow'; // ✅ Nuevo componente agregado
 import LoginScreen from './components/LoginScreen';
 import Notification from './components/Notification';
 import EditProductModal from './components/EditProductModal';
 import ConfirmDeleteModal from './components/ConfirmDeleteModal';
 import CreatePublicationModal from './components/CreatePublicationModal';
 
-// Icono genérico para la barra lateral
+// Icono genÃ©rico para la barra lateral
 const Icon = ({ path }) => (
-    <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={path}></path>
     </svg>
 );
 
-// Icono de hamburguesa para móvil
-const HamburgerIcon = () => (
-    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
-    </svg>
-);
-
-// Contexto Global de la Aplicación
+// Contexto Global de la AplicaciÃ³n
 export const AppContext = createContext();
 
 const AppProvider = ({ children }) => {
@@ -51,27 +42,10 @@ const AppProvider = ({ children }) => {
     const [supplierOrders, setSupplierOrders] = useState([]);
     const [purchaseOrders, setPurchaseOrders] = useState([]);
     const [notification, setNotification] = useState({ show: false, message: '', type: '' });
-    const [isMeliConnected, setIsMeliConnected] = useState(false);
 
     const showMessage = (message, type = 'info') => {
         setNotification({ show: true, message, type });
     };
-
-    // Verificar conexión con MercadoLibre
-    const checkMeliConnection = useCallback(async () => {
-        if (!session?.user?.id) return;
-        try {
-            const { data, error } = await supabase
-                .from('meli_credentials')
-                .select('access_token')
-                .eq('user_id', session.user.id)
-                .single();
-            
-            setIsMeliConnected(!error && data?.access_token);
-        } catch (err) {
-            setIsMeliConnected(false);
-        }
-    }, [session]);
 
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -103,7 +77,7 @@ const AppProvider = ({ children }) => {
 
     const fetchCategories = useCallback(async () => {
         const { data, error } = await supabase.from('categories').select('*').order('name', { ascending: true });
-        if (error) { showMessage('Error al refrescar las categorías.', 'error'); }
+        if (error) { showMessage('Error al refrescar las categorÃ­as.', 'error'); }
         else { setCategories(data || []); }
     }, []);
 
@@ -122,7 +96,7 @@ const AppProvider = ({ children }) => {
 
     const fetchPurchaseOrders = useCallback(async () => {
         const { data, error } = await supabase.from('purchase_orders').select(`*`).order('created_at', { ascending: false });
-        if (error) { showMessage('Error al cargar órdenes de compra.', 'error'); } 
+        if (error) { showMessage('Error al cargar Ã³rdenes de compra.', 'error'); } 
         else { setPurchaseOrders(data || []); }
     }, []);
 
@@ -132,10 +106,9 @@ const AppProvider = ({ children }) => {
         else setKits(data || []);
     }, []);
 
-    // Carga inicial de datos cuando el usuario inicia sesión
+    // Carga inicial de datos cuando el usuario inicia sesiÃ³n
     useEffect(() => {
         if (session) {
-            checkMeliConnection();
             Promise.all([
                 fetchProducts(),
                 fetchSuppliers(),
@@ -146,85 +119,29 @@ const AppProvider = ({ children }) => {
                 //fetchKits()
             ]);
         }
-    }, [session, checkMeliConnection, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchKits]);
+    }, [session, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchKits]);
     
     const value = { 
-        session, loading, showMessage, isMeliConnected, setIsMeliConnected,
+        session, loading, showMessage, 
         products, suppliers, categories, kits, salesOrders, supplierOrders, purchaseOrders,
         notification, setNotification, 
-        fetchProducts, fetchSuppliers, fetchCategories, fetchKits, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders,
-        checkMeliConnection
+        fetchProducts, fetchSuppliers, fetchCategories, fetchKits, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders 
     };
     
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
-// Componente de navegación móvil
-const MobileNav = ({ isOpen, onClose, currentPath, onLogout }) => {
-    if (!isOpen) return null;
 
-    const navItems = [
-        { path: '/dashboard', icon: "M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z", label: "Dashboard" },
-        { path: '/inventory', icon: "M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4", label: "Inventario" },
-        { path: '/entry', icon: "M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1", label: "Entrada" },
-        { path: '/inflow', icon: "M13 10V3L4 14h7v7l9-11h-7z", label: "InFlow" },
-        { path: '/sales', icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z", label: "Ventas" },
-        { path: '/orders', icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01", label: "Pedidos" },
-        { path: '/integrations', icon: "M13 10V3L4 14h7v7l9-11h-7z", label: "Integraciones" },
-    ];
-
-    return (
-        <div className="fixed inset-0 z-50 md:hidden">
-            <div className="fixed inset-0 bg-black bg-opacity-50" onClick={onClose}></div>
-            <div className="fixed top-0 left-0 w-64 h-full bg-gray-800 border-r border-gray-700 overflow-y-auto">
-                <div className="p-4">
-                    <div className="flex items-center justify-between mb-6">
-                        <span className="text-xl font-semibold text-white">ProdFlow</span>
-                        <button onClick={onClose} className="text-gray-400 hover:text-white">
-                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                            </svg>
-                        </button>
-                    </div>
-                    <nav className="space-y-2">
-                        {navItems.map((item) => (
-                            <Link
-                                key={item.path}
-                                to={item.path}
-                                onClick={onClose}
-                                className={`flex items-center w-full p-3 text-base font-normal rounded-lg transition duration-75 ${
-                                    currentPath === item.path ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
-                                }`}
-                            >
-                                <Icon path={item.icon} />
-                                <span className="ml-3">{item.label}</span>
-                            </Link>
-                        ))}
-                        <button
-                            onClick={() => { onLogout(); onClose(); }}
-                            className="flex items-center w-full p-3 text-base font-normal text-gray-400 rounded-lg transition duration-75 hover:bg-red-800 hover:text-white"
-                        >
-                            <Icon path="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                            <span className="ml-3">Cerrar Sesión</span>
-                        </button>
-                    </nav>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// Componente principal de la interfaz con React Router
+// Componente principal de la interfaz (barra lateral y contenido) - RESTAURADO A TU VERSIÃ“N ORIGINAL
 const AppContent = () => {
-    const location = useLocation();
+    const [activeTab, setActiveTab] = useState('dashboard');
     const [productToEdit, setProductToEdit] = useState(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [productToDelete, setProductToDelete] = useState(null);
     const [productToPublish, setProductToPublish] = useState(null);
     const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
-    const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
-    const { showMessage, notification, setNotification, fetchProducts, isMeliConnected } = useContext(AppContext);
+    const { showMessage, notification, setNotification, fetchProducts } = useContext(AppContext);
 
     const handleEdit = (product) => { setProductToEdit(product); setIsEditModalOpen(true); };
     const handlePublish = (product) => { setProductToPublish(product); setIsPublishModalOpen(true); };
@@ -235,7 +152,7 @@ const AppContent = () => {
             delete dataToUpdate.created_at; 
             const { error } = await supabase.from('products').update(dataToUpdate).eq('id', id);
             if (error) throw error;
-            showMessage("Producto actualizado con éxito.", "success");
+            showMessage("Producto actualizado con Ã©xito.", "success");
             setIsEditModalOpen(false);
             await fetchProducts();
         } catch (error) { showMessage(`Error al guardar cambios: ${error.message}`, 'error'); }
@@ -246,7 +163,7 @@ const AppContent = () => {
         try {
             const { error } = await supabase.from('products').delete().eq('id', productToDelete.id);
             if (error) throw error;
-            showMessage(`Producto ${productToDelete.sku} eliminado con éxito.`, 'success');
+            showMessage(`Producto ${productToDelete.sku} eliminado con Ã©xito.`, 'success');
             await fetchProducts();
         } catch (error) { showMessage(`Error al eliminar el producto: ${error.message}`, 'error'); }
         finally { setProductToDelete(null); }
@@ -254,39 +171,39 @@ const AppContent = () => {
     
     const handleLogout = async () => {
         const { error } = await supabase.auth.signOut();
-        if (error) { showMessage("Error al cerrar sesión: " + error.message, 'error'); }
+        if (error) { showMessage("Error al cerrar sesiÃ³n: " + error.message, 'error'); }
     };
 
-    const NavButton = ({ to, iconPath, children, requiresMeli = false }) => {
-        const isActive = location.pathname === to;
-        const isDisabled = requiresMeli && !isMeliConnected;
-        
-        if (isDisabled) {
-            return (
-                <li>
-                    <div className="flex items-center w-full p-2 text-base font-normal rounded-lg text-gray-500 cursor-not-allowed opacity-50">
-                        <Icon path={iconPath} />
-                        <span className="flex-1 ml-3 whitespace-nowrap text-sm md:text-base">{children}</span>
-                        <span className="text-xs bg-yellow-600 px-2 py-1 rounded-full">MELI</span>
-                    </div>
-                </li>
-            );
+    const renderActiveTab = () => {
+        switch (activeTab) {
+            case 'dashboard': return <Dashboard />;
+            case 'inventory': return <InventoryList onEdit={handleEdit} onDelete={setProductToDelete} onPublish={handlePublish} />;
+            case 'entry': return <ProductEntry />;
+            case 'sales': return <SalesView />;
+            case 'orders': return <OrdersManagement />;
+            case 'warehouse': return <WarehouseView />;
+            case 'kits': return <Kits />;
+            case 'history': return <MovementHistory />;
+            case 'tools': return <Tools />;
+            case 'integrations': return <Integrations />;
+            case 'publications': return <PublicationsView />;
+            default: return <Dashboard />;
         }
-
-        return (
-            <li>
-                <Link
-                    to={to}
-                    className={`flex items-center w-full p-2 text-base font-normal rounded-lg transition duration-75 group ${
-                        isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
-                    }`}
-                >
-                    <Icon path={iconPath} />
-                    <span className="flex-1 ml-3 whitespace-nowrap text-sm md:text-base">{children}</span>
-                </Link>
-            </li>
-        );
     };
+
+    const NavButton = ({ tabName, iconPath, children }) => (
+        <li>
+            <button
+                onClick={() => setActiveTab(tabName)}
+                className={`flex items-center w-full p-2 text-base font-normal rounded-lg transition duration-75 group ${
+                    activeTab === tabName ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                }`}
+            >
+                <Icon path={iconPath} />
+                <span className="flex-1 ml-3 whitespace-nowrap">{children}</span>
+            </button>
+        </li>
+    );
     
     return (
         <div className="bg-gray-900 text-gray-300 min-h-screen">
@@ -298,86 +215,38 @@ const AppContent = () => {
                 />
             )}
 
-            {/* Header móvil */}
-            <div className="md:hidden bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
-                <button
-                    onClick={() => setIsMobileNavOpen(true)}
-                    className="text-gray-400 hover:text-white"
-                >
-                    <HamburgerIcon />
-                </button>
-                <span className="text-lg font-semibold text-white">ProdFlow</span>
-                <div className="w-6"></div> {/* Spacer */}
-            </div>
-
-            {/* Navegación móvil */}
-            <MobileNav 
-                isOpen={isMobileNavOpen} 
-                onClose={() => setIsMobileNavOpen(false)}
-                currentPath={location.pathname}
-                onLogout={handleLogout}
-            />
-
-            {/* Sidebar desktop */}
-            <aside className="hidden md:fixed md:top-0 md:left-0 md:z-40 md:w-64 md:h-screen md:transition-transform md:bg-gray-800 md:border-r md:border-gray-700 md:block">
+            <aside className="fixed top-0 left-0 z-40 w-64 h-screen transition-transform bg-gray-800 border-r border-gray-700 sm:translate-x-0">
                 <div className="h-full px-3 py-4 overflow-y-auto bg-gray-800">
                     <div className="flex items-center pl-2.5 mb-5">
                         <span className="self-center text-xl font-semibold whitespace-nowrap text-white ml-3">ProdFlow</span>
                     </div>
                     <ul className="space-y-2">
-                        <NavButton to="/dashboard" iconPath="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z">Dashboard</NavButton>
-                        <NavButton to="/inventory" iconPath="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4">Inventario</NavButton>
-                        <NavButton to="/entry" iconPath="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1">Entrada</NavButton>
-                        <NavButton to="/inflow" iconPath="M13 10V3L4 14h7v7l9-11h-7z" requiresMeli={true}>InFlow</NavButton>
-                        <NavButton to="/sales" iconPath="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">Ventas</NavButton>
-                        <NavButton to="/orders" iconPath="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">Pedidos</NavButton>
-                        <NavButton to="/warehouse" iconPath="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h6m-6 4h6m-6 4h6">Depósito</NavButton>
-                        <NavButton to="/kits" iconPath="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2zM6 18h2a2 2 0 002-2v-2a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2z">Kits</NavButton>
-                        <NavButton to="/history" iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">Historial</NavButton>
+                        <NavButton tabName="dashboard" iconPath="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z">Dashboard</NavButton>
+                        <NavButton tabName="inventory" iconPath="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4">Inventario</NavButton>
+                        <NavButton tabName="entry" iconPath="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1">Entrada</NavButton>
+                        <NavButton tabName="sales" iconPath="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">Ventas</NavButton>
+                        <NavButton tabName="orders" iconPath="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">Pedidos</NavButton>
+                        <NavButton tabName="warehouse" iconPath="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h6m-6 4h6m-6 4h6">DepÃ³sito</NavButton>
+                        <NavButton tabName="kits" iconPath="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2zM6 18h2a2 2 0 002-2v-2a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2z">Kits</NavButton>
+                        <NavButton tabName="history" iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">Historial</NavButton>
                     </ul>
                     <ul className="pt-4 mt-4 space-y-2 border-t border-gray-700">
-                        <NavButton to="/tools" iconPath="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z">Herramientas</NavButton>
-                        <NavButton to="/integrations" iconPath="M13 10V3L4 14h7v7l9-11h-7z">Integraciones</NavButton>
-                        <NavButton to="/publications" iconPath="M3 10h18M3 14h18M3 6h18">Publicaciones</NavButton>
+                        <NavButton tabName="tools" iconPath="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z">Herramientas</NavButton>
+                        <NavButton tabName="integrations" iconPath="M13 10V3L4 14h7v7l9-11h-7z">Integraciones</NavButton>
+                        <NavButton tabName="publications" iconPath="M3 10h18M3 14h18M3 6h18">Publicaciones</NavButton>
                         <li>
                             <button onClick={handleLogout} className="flex items-center w-full p-2 text-base font-normal text-gray-400 rounded-lg transition duration-75 group hover:bg-red-800 hover:text-white">
                                 <Icon path="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                                <span className="flex-1 ml-3 whitespace-nowrap text-sm md:text-base">Cerrar Sesión</span>
+                                <span className="flex-1 ml-3 whitespace-nowrap">Cerrar SesiÃ³n</span>
                             </button>
                         </li>
                     </ul>
                 </div>
             </aside>
 
-            <main className="p-4 md:ml-64">
-                <div className="pt-4 md:pt-0">
-                    <Routes>
-                        <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="/inventory" element={<InventoryList onEdit={handleEdit} onDelete={setProductToDelete} onPublish={handlePublish} />} />
-                        <Route path="/entry" element={<ProductEntry />} />
-                        <Route path="/sales" element={<SalesView />} />
-                        <Route path="/orders" element={<OrdersManagement />} />
-                        <Route path="/warehouse" element={<WarehouseView />} />
-                        <Route path="/kits" element={<Kits />} />
-                        <Route path="/history" element={<MovementHistory />} />
-                        <Route path="/tools" element={<Tools />} />
-                        <Route path="/integrations" element={<Integrations />} />
-                        <Route path="/publications" element={<PublicationsView />} />
-                        
-                        {/* ✅ Nueva ruta para InFlow con protección de MELI */}
-                        <Route 
-                            path="/inflow" 
-                            element={
-                                isMeliConnected ? <InFlow /> : <Navigate to="/integrations" replace />
-                            } 
-                        />
-                        
-                        {/* Redirección por defecto */}
-                        <Route 
-                            path="/" 
-                            element={<Navigate to="/dashboard" replace />} 
-                        />
-                    </Routes>
+            <main className="p-4 sm:ml-64">
+                <div className="mt-14"> 
+                    {renderActiveTab()}
                 </div>
             </main>
 
@@ -394,10 +263,7 @@ const AppOrchestrator = () => {
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                    <p className="text-xl font-semibold text-white">Cargando...</p>
-                </div>
+                <p className="text-xl font-semibold text-white">Cargando...</p>
             </div>
         );
     }
@@ -407,9 +273,7 @@ const AppOrchestrator = () => {
 
 const App = () => (
     <AppProvider>
-        <Router>
-            <AppOrchestrator />
-        </Router>
+        <AppOrchestrator />
     </AppProvider>
 );
 
