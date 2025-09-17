@@ -161,7 +161,7 @@ const InFlow = () => {
         
         try {
             // ✅ LLAMADA CORREGIDA - Con includeDescriptions activado
-            const { data, error } = await supabase.functions.invoke('sync-mercadolibre', {
+            const { data, error } = await supabase.functions.invoke('mercadolibre-sync-listings', {
                 body: { 
                     includeDescriptions: true,  // Activar descripciones
                     preserveConfig: false 
