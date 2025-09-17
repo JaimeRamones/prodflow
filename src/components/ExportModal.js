@@ -508,7 +508,7 @@ const ExportModal = ({ isOpen, onClose }) => {
                 <div className="bg-blue-600 text-white p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <FiDownload className="w-6 h-6" />
-                        <h2 className="text-xl font-semibold">Obtener Mis Publicaciones (v2.1.0.8)</h2>
+                        <h2 className="text-xl font-semibold">Obtener Publicaciones InFlow</h2>
                     </div>
                     <button onClick={onClose} className="text-white hover:text-gray-200">
                         <FiX className="w-6 h-6" />
@@ -568,14 +568,14 @@ const ExportModal = ({ isOpen, onClose }) => {
                                     <h4 className="font-semibold text-blue-600 mb-3">Campos Básicos</h4>
                                     <div className="space-y-2">
                                         {['id', 'categoria', 'titulo', 'descripcion', 'precio', 'moneda', 'sku', 'estado', 'stock'].map(field => (
-                                            <label key={field} className="flex items-center gap-2">
+                                            <label key={field} className="flex items-center gap-2 cursor-pointer">
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedFields[field]}
                                                     onChange={() => handleFieldToggle(field)}
-                                                    className="w-4 h-4 text-blue-600"
+                                                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                                                 />
-                                                <span className="text-sm">{fieldLabels[field]}</span>
+                                                <span className="text-sm text-gray-700 select-none">{fieldLabels[field]}</span>
                                             </label>
                                         ))}
                                     </div>
@@ -586,14 +586,14 @@ const ExportModal = ({ isOpen, onClose }) => {
                                     <h4 className="font-semibold text-green-600 mb-3">Marketing y Ventas</h4>
                                     <div className="space-y-2">
                                         {['vendidos', 'visitas', 'campana', 'publicidad', 'descuento', 'ahora_12', 'tags'].map(field => (
-                                            <label key={field} className="flex items-center gap-2">
+                                            <label key={field} className="flex items-center gap-2 cursor-pointer">
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedFields[field]}
                                                     onChange={() => handleFieldToggle(field)}
-                                                    className="w-4 h-4 text-blue-600"
+                                                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                                                 />
-                                                <span className="text-sm">{fieldLabels[field]}</span>
+                                                <span className="text-sm text-gray-700 select-none">{fieldLabels[field]}</span>
                                             </label>
                                         ))}
                                     </div>
@@ -604,14 +604,14 @@ const ExportModal = ({ isOpen, onClose }) => {
                                     <h4 className="font-semibold text-purple-600 mb-3">Técnicos y Atributos</h4>
                                     <div className="space-y-2">
                                         {['atributo_marca', 'atributo_modelo', 'iva', 'impuesto_interno', 'estado_ficha_tecnica', 'calidad_publicacion'].map(field => (
-                                            <label key={field} className="flex items-center gap-2">
+                                            <label key={field} className="flex items-center gap-2 cursor-pointer">
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedFields[field]}
                                                     onChange={() => handleFieldToggle(field)}
-                                                    className="w-4 h-4 text-blue-600"
+                                                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                                                 />
-                                                <span className="text-sm">{fieldLabels[field]}</span>
+                                                <span className="text-sm text-gray-700 select-none">{fieldLabels[field]}</span>
                                             </label>
                                         ))}
                                     </div>
@@ -623,14 +623,14 @@ const ExportModal = ({ isOpen, onClose }) => {
                                 <h4 className="font-semibold text-orange-600 mb-3">Imágenes</h4>
                                 <div className="grid grid-cols-5 gap-4">
                                     {['imagen_1', 'imagen_2', 'imagen_3', 'imagen_4', 'imagen_5', 'imagen_6', 'imagen_7', 'imagen_8', 'imagen_9', 'imagen_10'].map(field => (
-                                        <label key={field} className="flex items-center gap-2">
+                                        <label key={field} className="flex items-center gap-2 cursor-pointer">
                                             <input
                                                 type="checkbox"
                                                 checked={selectedFields[field]}
                                                 onChange={() => handleFieldToggle(field)}
-                                                className="w-4 h-4 text-blue-600"
+                                                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                                             />
-                                            <span className="text-sm">{fieldLabels[field]}</span>
+                                            <span className="text-sm text-gray-700 select-none">{fieldLabels[field]}</span>
                                         </label>
                                     ))}
                                 </div>
