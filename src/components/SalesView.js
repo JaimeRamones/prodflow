@@ -44,7 +44,8 @@ const SalesView = () => {
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
     const [syncCacheItems, setSyncCacheItems] = useState([]);
-    const [supplierStock, setSupplierStock] = useState([]); // NUEVO: Para stock de proveedores
+    const [supplierStock, setSupplierStock] = useState([]); // Para stock de proveedores
+    const [publicationsData, setPublicationsData] = useState([]); // NUEVO: Para imágenes de publicaciones
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
@@ -168,7 +169,43 @@ const SalesView = () => {
             }
         };
 
-        fetchSyncCacheItems();
+    // NUEVO: Cargar datos de publicaciones para obtener imágenes
+    useEffect(() => {
+        const fetchPublicationsData = async () => {
+            try {
+                console.log('DEBUG - Cargando datos de publicaciones...');
+                const { data, error } = await supabase
+                    .from('mercadolibre_listings')
+                    .select('sku, thumbnail_url, pictures');
+                
+                if (error) {
+                    console.error('DEBUG - Error al cargar publicaciones:', error);
+                    throw error;
+                }
+                console.log('DEBUG - Datos de publicaciones cargados:', data);
+                console.log('DEBUG - Cantidad de publicaciones:', data?.length || 0);
+                
+                // Normalizar SKUs para mejor matching
+                const normalizedData = data?.map(item => ({
+                    ...item,
+                    normalized_sku: normalizeSku(item.sku)
+                })) || [];
+                
+                if (normalizedData.length > 0) {
+                    console.log('DEBUG - Primeras 3 publicaciones:');
+                    normalizedData.slice(0, 3).forEach(item => {
+                        console.log(`  SKU: "${item.normalized_sku}" - Thumbnail: ${!!item.thumbnail_url} - Pictures: ${!!item.pictures}`);
+                    });
+                }
+                
+                setPublicationsData(normalizedData);
+            } catch (error) {
+                console.error('Error cargando publicaciones:', error);
+                setPublicationsData([]);
+            }
+        };
+
+        fetchPublicationsData();
     }, []);
 
     // CORREGIDA: Función para determinar origen real basado en stock disponible y considerando kits
@@ -340,24 +377,78 @@ const SalesView = () => {
                     console.log('DEBUG - No se encontró costo válido para SKU:', normalizedItemSku);
                 }
                 
-                // CORREGIDO: Manejar imágenes sin depender de image_urls en products
+                // CORREGIDO: Buscar imágenes en publicaciones de MercadoLibre, no en order_items
                 let images = [];
                 
                 console.log('DEBUG - Procesando imágenes para item:', item.sku);
-                console.log('DEBUG - item.thumbnail_url:', item.thumbnail_url);
-                console.log('DEBUG - productInfo encontrado:', !!productInfo);
+                console.log('DEBUG - Total publicaciones disponibles:', publicationsData.length);
                 
-                // 1. Thumbnail de la orden (fuente principal y más confiable)
-                if (item.thumbnail_url) {
-                    const secureThumbnail = item.thumbnail_url.replace(/^http:/, 'https:');
-                    images.push(secureThumbnail);
-                    console.log('DEBUG - Agregada thumbnail:', secureThumbnail);
-                } else {
-                    console.log('DEBUG - No hay thumbnail_url disponible');
+                // Función para extraer SKU base de kits (igual que antes)
+                const getBaseSku = (sku) => {
+                    return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '').trim();
+                };
+                
+                const baseSkuNormalized = normalizeSku(getBaseSku(item.sku));
+                console.log('DEBUG - SKU base para imágenes:', baseSkuNormalized);
+                
+                // Buscar publicación que coincida con el SKU (directo o base)
+                let publication = publicationsData.find(p => p.normalized_sku === normalizedItemSku);
+                if (!publication && baseSkuNormalized !== normalizedItemSku) {
+                    publication = publicationsData.find(p => p.normalized_sku === baseSkuNormalized);
+                    console.log('DEBUG - Buscando por SKU base en publicaciones, encontrado:', !!publication);
                 }
                 
-                // 2. NOTA: products no tiene image_urls según la DB, omitir esta sección
-                console.log('DEBUG - Omitiendo búsqueda de image_urls (no existe en products)');
+                if (publication) {
+                    console.log('DEBUG - Publicación encontrada:', {
+                        sku: publication.sku,
+                        has_thumbnail: !!publication.thumbnail_url,
+                        has_pictures: !!publication.pictures
+                    });
+                    
+                    // 1. Thumbnail de la publicación
+                    if (publication.thumbnail_url) {
+                        const secureThumbnail = publication.thumbnail_url.replace(/^http:/, 'https:');
+                        images.push(secureThumbnail);
+                        console.log('DEBUG - Agregada thumbnail de publicación:', secureThumbnail);
+                    }
+                    
+                    // 2. Pictures de la publicación (JSON con imágenes completas)
+                    if (publication.pictures) {
+                        try {
+                            let picturesArray = [];
+                            
+                            // Manejar si pictures es string o ya es objeto
+                            if (typeof publication.pictures === 'string') {
+                                picturesArray = JSON.parse(publication.pictures);
+                            } else if (Array.isArray(publication.pictures)) {
+                                picturesArray = publication.pictures;
+                            }
+                            
+                            console.log('DEBUG - Pictures encontradas:', picturesArray.length);
+                            
+                            // Extraer URLs seguras de las pictures
+                            picturesArray.forEach((picture, idx) => {
+                                const imageUrl = picture.secure_url || picture.url;
+                                if (imageUrl && !images.includes(imageUrl)) {
+                                    images.push(imageUrl.replace(/^http:/, 'https:'));
+                                    console.log(`DEBUG - Agregada imagen ${idx + 1}:`, imageUrl);
+                                }
+                            });
+                            
+                        } catch (error) {
+                            console.error('DEBUG - Error parseando pictures:', error);
+                        }
+                    }
+                    
+                } else {
+                    console.log('DEBUG - No se encontró publicación para SKU:', normalizedItemSku);
+                    if (publicationsData.length > 0) {
+                        console.log('DEBUG - SKUs de publicaciones disponibles (primeros 5):');
+                        publicationsData.slice(0, 5).forEach(p => {
+                            console.log(`  "${p.normalized_sku}"`);
+                        });
+                    }
+                }
                 
                 console.log('DEBUG - Total imágenes encontradas:', images.length, images);
                 
@@ -387,7 +478,7 @@ const SalesView = () => {
                 calculated_source_type: orderSourceType // NUEVO: Origen calculado correctamente
             };
         });
-    }, [salesOrders, products, syncCacheItems, supplierStock]);
+    }, [salesOrders, products, syncCacheItems, supplierStock, publicationsData]);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
