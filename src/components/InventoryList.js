@@ -212,7 +212,9 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                 alternatives: alternatives,
                 oem_references: oemRefs,
                 has_alternatives: alternatives.length > 0,
-                alternatives_in_stock: alternatives.filter(alt => (alt.stock_disponible || 0) > 0).length
+                alternatives_in_stock: alternatives.filter(alt => (alt.stock_disponible || 0) > 0).length,
+                // Marcar propiedades como no persistibles
+                _computed_fields: ['movement_score', 'scoring_details', 'supplier_name', 'alternatives_count', 'alternatives', 'oem_references', 'has_alternatives', 'alternatives_in_stock']
             };
         });
     }, [products, calculateProductScore, getProductAlternatives, suppliers, productReferences]);
@@ -421,6 +423,25 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
             </div>
         </th>
     );
+
+    // Función para limpiar el producto antes de enviarlo al modal de edición
+    const cleanProductForEdit = (product) => {
+        // Eliminar propiedades calculadas que no pertenecen a la tabla products
+        const {
+            movement_score,
+            scoring_details,
+            supplier_name,
+            alternatives_count,
+            alternatives,
+            oem_references,
+            has_alternatives,
+            alternatives_in_stock,
+            _computed_fields,
+            ...cleanProduct
+        } = product;
+        
+        return cleanProduct;
+    };
 
     return (
         <div>
@@ -779,7 +800,7 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                                                 </svg>
                                             </button>
                                             <button 
-                                                onClick={() => onEdit(product)} 
+                                                onClick={() => onEdit(cleanProductForEdit(product))} 
                                                 title="Editar" 
                                                 className="p-1 text-blue-400 hover:text-white hover:bg-blue-500 rounded-md transition-colors"
                                             >
@@ -788,7 +809,7 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                                                 </svg>
                                             </button>
                                             <button 
-                                                onClick={() => onDelete(product)} 
+                                                onClick={() => onDelete(cleanProductForEdit(product))} 
                                                 title="Eliminar" 
                                                 className="p-1 text-red-400 hover:text-white hover:bg-red-500 rounded-md transition-colors"
                                             >
