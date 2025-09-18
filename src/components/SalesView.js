@@ -44,8 +44,8 @@ const SalesView = () => {
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
     const [syncCacheItems, setSyncCacheItems] = useState([]);
-    const [supplierStock, setSupplierStock] = useState([]); // Para stock de proveedores
-    const [publicationsData, setPublicationsData] = useState([]); // NUEVO: Para imágenes de publicaciones
+    const [supplierStock, setSupplierStock] = useState([]);
+    const [publicationsData, setPublicationsData] = useState([]);
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
@@ -98,7 +98,7 @@ const SalesView = () => {
         return sku.toString().trim().replace(/\s+/g, ' ').toUpperCase();
     };
 
-    // NUEVO: Cargar stock de proveedores
+    // Cargar stock de proveedores
     useEffect(() => {
         const fetchSupplierStock = async () => {
             try {
@@ -113,7 +113,6 @@ const SalesView = () => {
                 }
                 console.log('DEBUG - Stock de proveedores cargado:', data);
                 
-                // Normalizar SKUs
                 const normalizedData = data?.map(item => ({
                     ...item,
                     normalized_sku: normalizeSku(item.sku)
@@ -133,8 +132,6 @@ const SalesView = () => {
         const fetchSyncCacheItems = async () => {
             try {
                 console.log('DEBUG - Iniciando carga de sync_cache...');
-                
-                // CORREGIDO: Usar la estructura real de sync_cache
                 const { data, error } = await supabase
                     .from('sync_cache')
                     .select('sku, calculated_price');
@@ -148,11 +145,10 @@ const SalesView = () => {
                 console.log('DEBUG - Datos de sync_cache cargados:', data);
                 console.log('DEBUG - Cantidad de items:', data?.length || 0);
                 
-                // Normalizar datos con la estructura correcta
                 const normalizedData = data?.map(item => ({
                     ...item,
                     normalized_sku: normalizeSku(item.sku),
-                    calculated_cost: item.calculated_price || 0 // CORREGIDO: usar calculated_price
+                    calculated_cost: item.calculated_price || 0
                 })) || [];
                 
                 if (normalizedData.length > 0) {
@@ -164,51 +160,15 @@ const SalesView = () => {
                 
                 setSyncCacheItems(normalizedData);
             } catch (error) {
-                console.error('Error general cargando sync_cache:', error);
+                console.error('Error cargando costos desde sync_cache:', error);
                 setSyncCacheItems([]);
-            }
-        };
-
-    // NUEVO: Cargar datos de publicaciones para obtener imágenes
-    useEffect(() => {
-        const fetchPublicationsData = async () => {
-            try {
-                console.log('DEBUG - Cargando datos de publicaciones...');
-                const { data, error } = await supabase
-                    .from('mercadolibre_listings')
-                    .select('sku, thumbnail_url, pictures');
-                
-                if (error) {
-                    console.error('DEBUG - Error al cargar publicaciones:', error);
-                    throw error;
-                }
-                console.log('DEBUG - Datos de publicaciones cargados:', data);
-                console.log('DEBUG - Cantidad de publicaciones:', data?.length || 0);
-                
-                // Normalizar SKUs para mejor matching
-                const normalizedData = data?.map(item => ({
-                    ...item,
-                    normalized_sku: normalizeSku(item.sku)
-                })) || [];
-                
-                if (normalizedData.length > 0) {
-                    console.log('DEBUG - Primeras 3 publicaciones:');
-                    normalizedData.slice(0, 3).forEach(item => {
-                        console.log(`  SKU: "${item.normalized_sku}" - Thumbnail: ${!!item.thumbnail_url} - Pictures: ${!!item.pictures}`);
-                    });
-                }
-                
-                setPublicationsData(normalizedData);
-            } catch (error) {
-                console.error('Error cargando publicaciones:', error);
-                setPublicationsData([]);
             }
         };
 
         fetchSyncCacheItems();
     }, []);
 
-    // NUEVO: Cargar datos de publicaciones para obtener imágenes
+    // Cargar datos de publicaciones para obtener imágenes
     useEffect(() => {
         const fetchPublicationsData = async () => {
             try {
@@ -224,7 +184,6 @@ const SalesView = () => {
                 console.log('DEBUG - Datos de publicaciones cargados:', data);
                 console.log('DEBUG - Cantidad de publicaciones:', data?.length || 0);
                 
-                // Normalizar SKUs para mejor matching
                 const normalizedData = data?.map(item => ({
                     ...item,
                     normalized_sku: normalizeSku(item.sku)
@@ -247,7 +206,7 @@ const SalesView = () => {
         fetchPublicationsData();
     }, []);
 
-    // CORREGIDA: Función para determinar origen real basado en stock disponible y considerando kits
+    // Función para determinar origen real basado en stock disponible y considerando kits
     const determineItemSourceType = (sku, requiredQuantity) => {
         const normalizedSku = normalizeSku(sku);
         
@@ -293,7 +252,6 @@ const SalesView = () => {
         console.log(`  Stock propio disponible: ${myStock}`);
         
         if (myStock >= baseQuantityNeeded) {
-            // Tengo suficiente stock propio
             console.log(`  ✓ Stock propio suficiente`);
             return 'stock_propio';
         }
@@ -305,23 +263,20 @@ const SalesView = () => {
         console.log(`  Stock en proveedores: ${totalSupplierStock}`);
         
         if (myStock === 0 && totalSupplierStock >= baseQuantityNeeded) {
-            // No tengo stock pero sí hay en proveedores
             console.log(`  → Proveedor directo`);
             return 'proveedor_directo';
         }
         
         if (myStock > 0 && (myStock + totalSupplierStock) >= baseQuantityNeeded) {
-            // Tengo algo de stock pero necesito completar con proveedor
             console.log(`  → Mixto (${myStock} propio + ${totalSupplierStock} proveedor)`);
             return 'mixto';
         }
         
-        // Por defecto, asumir stock propio si no hay claridad
         console.log(`  → Default: stock_propio (no hay suficiente info)`);
         return 'stock_propio';
     };
 
-    // NUEVA FUNCIÓN: Determinar origen de la orden completa
+    // Función para determinar origen de la orden completa
     const determineOrderSourceType = (orderItems) => {
         const itemSourceTypes = orderItems.map(item => 
             determineItemSourceType(item.sku, item.quantity)
@@ -356,7 +311,7 @@ const SalesView = () => {
         let interval;
         
         if (autoSyncEnabled) {
-            handleAutoSync(); // Sincronizar inmediatamente
+            handleAutoSync();
             interval = setInterval(handleAutoSync, AUTO_SYNC_INTERVAL);
         }
         
@@ -383,20 +338,32 @@ const SalesView = () => {
                 console.log('DEBUG - SKU original del item:', item.sku);
                 console.log('DEBUG - Total products disponibles:', products.length);
                 
-                // Buscar el producto por SKU para imágenes
-                console.log('DEBUG - Buscando producto para SKU:', normalizedItemSku);
-                console.log('DEBUG - SKUs disponibles en products (primeros 5):', products.slice(0, 5).map(p => ({sku: p.sku, normalized: normalizeSku(p.sku)})));
+                // Función para extraer SKU base de kits
+                const getBaseSku = (sku) => {
+                    return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '').trim();
+                };
                 
-                const productInfo = products.find(p => normalizeSku(p.sku) === normalizedItemSku);
+                const baseSkuNormalized = normalizeSku(getBaseSku(item.sku));
+                console.log('DEBUG - SKU base extraído:', baseSkuNormalized);
+                
+                // Intentar match directo primero, luego por SKU base
+                let productInfo = products.find(p => normalizeSku(p.sku) === normalizedItemSku);
+                if (!productInfo && baseSkuNormalized !== normalizedItemSku) {
+                    productInfo = products.find(p => normalizeSku(p.sku) === baseSkuNormalized);
+                    console.log('DEBUG - Buscando por SKU base, encontrado:', !!productInfo);
+                }
+                
                 console.log('DEBUG - Producto encontrado:', !!productInfo);
                 if (productInfo) {
                     console.log('DEBUG - Datos del producto encontrado:', {
                         id: productInfo.id,
                         sku: productInfo.sku,
                         name: productInfo.name,
-                        image_urls: productInfo.image_urls,
-                        image_urls_type: typeof productInfo.image_urls
+                        stock_disponible: productInfo.stock_disponible
                     });
+                } else {
+                    console.log('DEBUG - SKUs disponibles en products (primeros 5):', 
+                        products.slice(0, 5).map(p => ({sku: p.sku, normalized: normalizeSku(p.sku)})));
                 }
                 
                 // Buscar el costo en sync_cache usando SKU normalizado
@@ -416,24 +383,23 @@ const SalesView = () => {
                     console.log('DEBUG - No se encontró costo válido para SKU:', normalizedItemSku);
                 }
                 
-                // CORREGIDO: Buscar imágenes en publicaciones de MercadoLibre, no en order_items
+                // Buscar imágenes en publicaciones de MercadoLibre
                 let images = [];
                 
                 console.log('DEBUG - Procesando imágenes para item:', item.sku);
                 console.log('DEBUG - Total publicaciones disponibles:', publicationsData.length);
                 
-                // Función para extraer SKU base de kits (igual que antes)
                 const getBaseSku = (sku) => {
                     return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '').trim();
                 };
                 
-                const baseSkuNormalized = normalizeSku(getBaseSku(item.sku));
-                console.log('DEBUG - SKU base para imágenes:', baseSkuNormalized);
+                const baseSkuNormalized2 = normalizeSku(getBaseSku(item.sku));
+                console.log('DEBUG - SKU base para imágenes:', baseSkuNormalized2);
                 
                 // Buscar publicación que coincida con el SKU (directo o base)
                 let publication = publicationsData.find(p => p.normalized_sku === normalizedItemSku);
-                if (!publication && baseSkuNormalized !== normalizedItemSku) {
-                    publication = publicationsData.find(p => p.normalized_sku === baseSkuNormalized);
+                if (!publication && baseSkuNormalized2 !== normalizedItemSku) {
+                    publication = publicationsData.find(p => p.normalized_sku === baseSkuNormalized2);
                     console.log('DEBUG - Buscando por SKU base en publicaciones, encontrado:', !!publication);
                 }
                 
@@ -491,18 +457,18 @@ const SalesView = () => {
                 
                 console.log('DEBUG - Total imágenes encontradas:', images.length, images);
                 
-                // NUEVO: Determinar origen real del item
+                // Determinar origen real del item
                 const itemSourceType = determineItemSourceType(item.sku, item.quantity);
                 
                 return {
                     ...item,
                     cost_with_vat: costWithVat,
                     images: images,
-                    source_type: itemSourceType // NUEVO campo
+                    source_type: itemSourceType
                 };
             });
             
-            // NUEVO: Determinar origen real de la orden completa
+            // Determinar origen real de la orden completa
             const orderSourceType = determineOrderSourceType(order.order_items);
             
             // Calcular total con IVA
@@ -514,7 +480,7 @@ const SalesView = () => {
                 ...order,
                 order_items: updatedOrderItems,
                 total_cost_with_vat: totalCostWithVat,
-                calculated_source_type: orderSourceType // NUEVO: Origen calculado correctamente
+                calculated_source_type: orderSourceType
             };
         });
     }, [salesOrders, products, syncCacheItems, supplierStock, publicationsData]);
@@ -535,7 +501,7 @@ const SalesView = () => {
             }
         }
 
-        // CORREGIDO: Filtrar por origen usando el origen calculado correctamente
+        // Filtrar por origen usando el origen calculado correctamente
         if (filters.origin !== 'all') {
             filtered = filtered.filter(order => {
                 return order.calculated_source_type === filters.origin;
@@ -566,7 +532,7 @@ const SalesView = () => {
     
     const totalPages = Math.ceil(filteredAndSortedOrders.length / ITEMS_PER_PAGE);
 
-    // CORREGIDO: Calcular estadísticas por origen usando el origen calculado
+    // Calcular estadísticas por origen usando el origen calculado
     const originStats = useMemo(() => {
         const stats = {
             stock_propio: 0,
@@ -609,7 +575,7 @@ const SalesView = () => {
         } 
     };
 
-    // CORREGIDO: Selección masiva por origen usando el origen calculado
+    // Selección masiva por origen usando el origen calculado
     const handleSelectByOrigin = (originType) => {
         const ordersOfOrigin = paginatedOrders.filter(order => {
             return order.calculated_source_type === originType;
@@ -633,7 +599,6 @@ const SalesView = () => {
         } 
     };
     
-    // FUNCIÓN ACTUALIZADA para usar smart-process-order
     const handleProcessOrder = async (orderId) => { 
         setIsProcessing(orderId); 
         try { 
@@ -643,12 +608,10 @@ const SalesView = () => {
             
             if (error) throw error; 
             
-            // Mostrar mensaje detallado basado en la respuesta
             const response = data;
             if (response.success) {
                 showMessage(response.message, 'success');
                 
-                // Mostrar detalles adicionales si se crearon pedidos a proveedores
                 if (response.supplier_orders_created && response.supplier_orders_created.length > 0) {
                     const supplierDetails = response.supplier_orders_created
                         .map(so => `${so.supplier_name} (${so.items_count} items)`)
@@ -1085,7 +1048,7 @@ const SalesView = () => {
                     <p className="text-center p-8 text-gray-400">Cargando...</p> 
                 ) : ( 
                     paginatedOrders.length > 0 ? paginatedOrders.map(order => {
-                        // CORREGIDO: Usar el origen calculado correctamente
+                        // Usar el origen calculado correctamente
                         const orderSourceType = order.calculated_source_type || 'stock_propio';
 
                         return (
@@ -1110,7 +1073,7 @@ const SalesView = () => {
                                                 <p className="text-xs text-gray-400">
                                                     {formatDate(order.created_at)}
                                                 </p>
-                                                {/* CORREGIDO: Chip de origen a nivel de orden */}
+                                                {/* Chip de origen a nivel de orden */}
                                                 {getSourceChip(orderSourceType)}
                                             </div>
                                         </div>
@@ -1167,7 +1130,7 @@ const SalesView = () => {
                                                     <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
                                                         SKU: {item.sku || 'N/A'}
                                                     </p>
-                                                    {/* CORREGIDO: Mostrar origen del item basado en cálculo real */}
+                                                    {/* Mostrar origen del item basado en cálculo real */}
                                                     {getSourceChip(item.source_type || 'stock_propio')}
                                                 </div>
                                             </div>
