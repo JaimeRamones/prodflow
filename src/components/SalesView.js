@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN COMPLETA con Smart Processing, indicadores de origen y filtros avanzados - SIN ERRORES
+// VERSIÓN COMPLETA con Smart Processing, indicadores de origen y filtros avanzados - CORREGIDO
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -37,13 +37,14 @@ const SalesView = () => {
     const [filters, setFilters] = useState({ 
         shippingType: 'all', 
         status: 'all', 
-        origin: 'all' // NUEVO: filtro por origen
+        origin: 'all'
     });
     const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
     const [expandedOrders, setExpandedOrders] = useState(new Set());
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
     const [syncCacheItems, setSyncCacheItems] = useState([]);
+    const [supplierStock, setSupplierStock] = useState([]); // NUEVO: Para stock de proveedores
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
@@ -96,6 +97,36 @@ const SalesView = () => {
         return sku.toString().trim().replace(/\s+/g, ' ').toUpperCase();
     };
 
+    // NUEVO: Cargar stock de proveedores
+    useEffect(() => {
+        const fetchSupplierStock = async () => {
+            try {
+                console.log('DEBUG - Cargando stock de proveedores...');
+                const { data, error } = await supabase
+                    .from('supplier_stock_items')
+                    .select('sku, quantity, supplier_id');
+                
+                if (error) {
+                    console.error('DEBUG - Error al cargar supplier_stock_items:', error);
+                    throw error;
+                }
+                console.log('DEBUG - Stock de proveedores cargado:', data);
+                
+                // Normalizar SKUs
+                const normalizedData = data?.map(item => ({
+                    ...item,
+                    normalized_sku: normalizeSku(item.sku)
+                })) || [];
+                
+                setSupplierStock(normalizedData);
+            } catch (error) {
+                console.error('Error cargando stock de proveedores:', error);
+            }
+        };
+
+        fetchSupplierStock();
+    }, []);
+
     // Cargar datos de sync_cache para obtener costos calculados
     useEffect(() => {
         const fetchSyncCacheItems = async () => {
@@ -134,6 +165,60 @@ const SalesView = () => {
         fetchSyncCacheItems();
     }, []);
 
+    // NUEVA FUNCIÓN: Determinar origen real basado en stock disponible
+    const determineItemSourceType = (sku, requiredQuantity) => {
+        const normalizedSku = normalizeSku(sku);
+        
+        // Buscar producto en mi inventario
+        const product = products.find(p => normalizeSku(p.sku) === normalizedSku);
+        const myStock = product?.stock_disponible || 0;
+        
+        console.log(`DEBUG - Verificando origen para SKU ${normalizedSku}: Stock propio=${myStock}, Requerido=${requiredQuantity}`);
+        
+        if (myStock >= requiredQuantity) {
+            // Tengo suficiente stock propio
+            console.log(`  ✓ Stock propio suficiente`);
+            return 'stock_propio';
+        }
+        
+        // Verificar stock en proveedores
+        const supplierStockItems = supplierStock.filter(s => s.normalized_sku === normalizedSku);
+        const totalSupplierStock = supplierStockItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        
+        console.log(`  Stock en proveedores: ${totalSupplierStock}`);
+        
+        if (myStock === 0 && totalSupplierStock >= requiredQuantity) {
+            // No tengo stock pero sí hay en proveedores
+            console.log(`  → Proveedor directo`);
+            return 'proveedor_directo';
+        }
+        
+        if (myStock > 0 && (myStock + totalSupplierStock) >= requiredQuantity) {
+            // Tengo algo de stock pero necesito completar con proveedor
+            console.log(`  → Mixto (${myStock} propio + ${totalSupplierStock} proveedor)`);
+            return 'mixto';
+        }
+        
+        // Por defecto, asumir stock propio si no hay claridad
+        console.log(`  → Default: stock_propio`);
+        return 'stock_propio';
+    };
+
+    // NUEVA FUNCIÓN: Determinar origen de la orden completa
+    const determineOrderSourceType = (orderItems) => {
+        const itemSourceTypes = orderItems.map(item => 
+            determineItemSourceType(item.sku, item.quantity)
+        );
+        
+        const uniqueSourceTypes = [...new Set(itemSourceTypes)];
+        
+        if (uniqueSourceTypes.length > 1) {
+            return 'mixto';
+        }
+        
+        return uniqueSourceTypes[0] || 'stock_propio';
+    };
+
     // Función de sincronización automática
     const handleAutoSync = useCallback(async () => {
         if (!autoSyncEnabled) return;
@@ -165,11 +250,12 @@ const SalesView = () => {
         };
     }, [autoSyncEnabled, handleAutoSync]);
 
-    // Procesar órdenes con cálculos de costos desde sync_cache
+    // Procesar órdenes con cálculos de costos desde sync_cache y origen correcto
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         
         console.log('DEBUG - Procesando órdenes. Total sync_cache items:', syncCacheItems.length);
+        console.log('DEBUG - Procesando órdenes. Total supplier stock items:', supplierStock.length);
         
         return salesOrders.map(order => {
             let orderTotalCost = 0;
@@ -196,17 +282,6 @@ const SalesView = () => {
                     console.log('DEBUG - Costo original:', syncCacheInfo.calculated_cost, 'x', item.quantity, '=', itemTotalCost);
                 } else {
                     console.log('DEBUG - No se encontró costo válido para SKU:', normalizedItemSku);
-                    if (syncCacheInfo) {
-                        console.log('DEBUG - Sync cache info existe pero calculated_cost es:', syncCacheInfo.calculated_cost);
-                    } else {
-                        console.log('DEBUG - No existe registro en sync_cache para:', normalizedItemSku);
-                        if (syncCacheItems.length > 0) {
-                            console.log('DEBUG - SKUs disponibles (primeros 5):');
-                            syncCacheItems.slice(0, 5).forEach(s => {
-                                console.log(`  "${s.normalized_sku}"`);
-                            });
-                        }
-                    }
                 }
                 
                 // Manejar imágenes de forma segura
@@ -227,24 +302,33 @@ const SalesView = () => {
                     images.push(...productImages);
                 }
                 
+                // NUEVO: Determinar origen real del item
+                const itemSourceType = determineItemSourceType(item.sku, item.quantity);
+                
                 return {
                     ...item,
                     cost_with_vat: costWithVat,
-                    images: images
+                    images: images,
+                    source_type: itemSourceType // NUEVO campo
                 };
             });
+            
+            // NUEVO: Determinar origen real de la orden completa
+            const orderSourceType = determineOrderSourceType(order.order_items);
             
             // Calcular total con IVA
             const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
             console.log('DEBUG - Total costo con IVA de la orden:', totalCostWithVat);
+            console.log('DEBUG - Origen determinado para orden:', orderSourceType);
             
             return {
                 ...order,
                 order_items: updatedOrderItems,
-                total_cost_with_vat: totalCostWithVat
+                total_cost_with_vat: totalCostWithVat,
+                calculated_source_type: orderSourceType // NUEVO: Origen calculado correctamente
             };
         });
-    }, [salesOrders, products, syncCacheItems]);
+    }, [salesOrders, products, syncCacheItems, supplierStock]);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
@@ -262,16 +346,10 @@ const SalesView = () => {
             }
         }
 
-        // NUEVO: Filtrar por origen
+        // CORREGIDO: Filtrar por origen usando el origen calculado correctamente
         if (filters.origin !== 'all') {
             filtered = filtered.filter(order => {
-                const orderSourceTypes = order.order_items.map(item => 
-                    item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                );
-                const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
-                
-                return orderSourceType === filters.origin;
+                return order.calculated_source_type === filters.origin;
             });
         }
         
@@ -299,7 +377,7 @@ const SalesView = () => {
     
     const totalPages = Math.ceil(filteredAndSortedOrders.length / ITEMS_PER_PAGE);
 
-    // Calcular estadísticas por origen
+    // CORREGIDO: Calcular estadísticas por origen usando el origen calculado
     const originStats = useMemo(() => {
         const stats = {
             stock_propio: 0,
@@ -308,13 +386,8 @@ const SalesView = () => {
         };
 
         processedOrders.forEach(order => {
-            const orderSourceTypes = order.order_items.map(item => 
-                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-            );
-            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-            const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
-            
-            stats[orderSourceType]++;
+            const sourceType = order.calculated_source_type || 'stock_propio';
+            stats[sourceType]++;
         });
 
         return stats;
@@ -347,16 +420,10 @@ const SalesView = () => {
         } 
     };
 
-    // NUEVO: Selección masiva por origen
+    // CORREGIDO: Selección masiva por origen usando el origen calculado
     const handleSelectByOrigin = (originType) => {
         const ordersOfOrigin = paginatedOrders.filter(order => {
-            const orderSourceTypes = order.order_items.map(item => 
-                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-            );
-            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-            const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
-            
-            return orderSourceType === originType;
+            return order.calculated_source_type === originType;
         });
         
         setSelectedOrders(new Set(ordersOfOrigin.map(o => o.id)));
@@ -688,7 +755,7 @@ const SalesView = () => {
                             </select>
                         </div>
 
-                        {/* NUEVO: Filtro por Origen */}
+                        {/* Filtro por Origen */}
                         <div className="group">
                             <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center space-x-2">
                                 <svg className="w-4 h-4 text-gray-400 group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -799,62 +866,26 @@ const SalesView = () => {
                 <div className="flex flex-wrap gap-2">
                     <button
                         onClick={() => handleSelectByOrigin('stock_propio')}
-                        disabled={!paginatedOrders.some(order => {
-                            const orderSourceTypes = order.order_items.map(item => 
-                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                            );
-                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'stock_propio';
-                        })}
+                        disabled={!paginatedOrders.some(order => order.calculated_source_type === 'stock_propio')}
                         className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Solo Stock Propio ({paginatedOrders.filter(order => {
-                            const orderSourceTypes = order.order_items.map(item => 
-                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                            );
-                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'stock_propio';
-                        }).length})
+                        Solo Stock Propio ({paginatedOrders.filter(order => order.calculated_source_type === 'stock_propio').length})
                     </button>
 
                     <button
                         onClick={() => handleSelectByOrigin('proveedor_directo')}
-                        disabled={!paginatedOrders.some(order => {
-                            const orderSourceTypes = order.order_items.map(item => 
-                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                            );
-                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'proveedor_directo';
-                        })}
+                        disabled={!paginatedOrders.some(order => order.calculated_source_type === 'proveedor_directo')}
                         className="px-3 py-1 text-xs bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Solo Proveedor ({paginatedOrders.filter(order => {
-                            const orderSourceTypes = order.order_items.map(item => 
-                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                            );
-                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                            return uniqueSourceTypes.length === 1 && uniqueSourceTypes[0] === 'proveedor_directo';
-                        }).length})
+                        Solo Proveedor ({paginatedOrders.filter(order => order.calculated_source_type === 'proveedor_directo').length})
                     </button>
 
                     <button
                         onClick={() => handleSelectByOrigin('mixto')}
-                        disabled={!paginatedOrders.some(order => {
-                            const orderSourceTypes = order.order_items.map(item => 
-                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                            );
-                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                            return uniqueSourceTypes.length > 1;
-                        })}
+                        disabled={!paginatedOrders.some(order => order.calculated_source_type === 'mixto')}
                         className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Solo Mixtas ({paginatedOrders.filter(order => {
-                            const orderSourceTypes = order.order_items.map(item => 
-                                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                            );
-                            const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                            return uniqueSourceTypes.length > 1;
-                        }).length})
+                        Solo Mixtas ({paginatedOrders.filter(order => order.calculated_source_type === 'mixto').length})
                     </button>
                 </div>
             </div>
@@ -865,12 +896,8 @@ const SalesView = () => {
                     <p className="text-center p-8 text-gray-400">Cargando...</p> 
                 ) : ( 
                     paginatedOrders.length > 0 ? paginatedOrders.map(order => {
-                        // Determinar el tipo de origen de la orden
-                        const orderSourceTypes = order.order_items.map(item => 
-                            item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
-                        );
-                        const uniqueSourceTypes = [...new Set(orderSourceTypes)];
-                        const orderSourceType = uniqueSourceTypes.length > 1 ? 'mixto' : uniqueSourceTypes[0];
+                        // CORREGIDO: Usar el origen calculado correctamente
+                        const orderSourceType = order.calculated_source_type || 'stock_propio';
 
                         return (
                             <div key={order.id} className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
@@ -894,7 +921,7 @@ const SalesView = () => {
                                                 <p className="text-xs text-gray-400">
                                                     {formatDate(order.created_at)}
                                                 </p>
-                                                {/* Chip de origen a nivel de orden */}
+                                                {/* CORREGIDO: Chip de origen a nivel de orden */}
                                                 {getSourceChip(orderSourceType)}
                                             </div>
                                         </div>
@@ -945,22 +972,8 @@ const SalesView = () => {
                                                     <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
                                                         SKU: {item.sku || 'N/A'}
                                                     </p>
-                                                    {/* Mostrar origen del item */}
-                                                    {item.assigned_supplier_id ? (
-                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30">
-                                                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
-                                                            </svg>
-                                                            {getSupplierInfo(item.assigned_supplier_id)}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30">
-                                                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/>
-                                                            </svg>
-                                                            Stock Propio
-                                                        </span>
-                                                    )}
+                                                    {/* CORREGIDO: Mostrar origen del item basado en cálculo real */}
+                                                    {getSourceChip(item.source_type || 'stock_propio')}
                                                 </div>
                                             </div>
                                             
