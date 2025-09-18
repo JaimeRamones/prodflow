@@ -286,6 +286,68 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
         return { color: 'bg-green-500', label: 'OK', priority: 'low' };
     };
 
+    const getPricingStatus = (product) => {
+        if (!product.cost_price || product.cost_price <= 0) {
+            return { 
+                icon: '⚠️', 
+                color: 'text-red-400', 
+                label: 'Sin precio de proveedor', 
+                severity: 'error' 
+            };
+        }
+        if (!product.sale_price || product.sale_price <= 0) {
+            return { 
+                icon: '📋', 
+                color: 'text-orange-400', 
+                label: 'Sin precio de venta calculado', 
+                severity: 'warning' 
+            };
+        }
+        return { 
+            icon: '✅', 
+            color: 'text-green-400', 
+            label: 'Precios OK', 
+            severity: 'ok' 
+        };
+    };
+
+    // Función para sincronizar precios de un producto
+    const handleSyncPrices = async (productId) => {
+        try {
+            const { data, error } = await supabase.rpc('apply_product_pricing', { 
+                product_id_param: productId 
+            });
+            
+            if (error) throw error;
+            
+            showMessage(`Precio sincronizado correctamente`, 'success');
+            // Recargar productos después de sincronizar
+            window.location.reload();
+        } catch (error) {
+            showMessage(`Error sincronizando precio: ${error.message}`, 'error');
+        }
+    };
+
+    // Función para sincronizar todos los precios
+    const handleSyncAllPrices = async () => {
+        setIsLoadingSales(true);
+        try {
+            const { data, error } = await supabase.rpc('apply_product_pricing');
+            
+            if (error) throw error;
+            
+            showMessage(`${data} productos actualizados con precios de proveedores`, 'success');
+            // Recargar productos después de sincronizar
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } catch (error) {
+            showMessage(`Error sincronizando precios: ${error.message}`, 'error');
+        } finally {
+            setIsLoadingSales(false);
+        }
+    };
+
     const getAlternativesIndicator = (product) => {
         if (!product.has_alternatives) return null;
         
@@ -376,6 +438,23 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
 
                 {/* Controles superiores */}
                 <div className="flex flex-wrap items-center gap-3">
+                    {/* Botón sincronizar precios */}
+                    <button
+                        onClick={handleSyncAllPrices}
+                        disabled={isLoadingSales}
+                        className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+                        title="Sincronizar todos los precios desde proveedores"
+                    >
+                        {isLoadingSales ? (
+                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                        ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4"></path>
+                            </svg>
+                        )}
+                        Sync Precios
+                    </button>
+
                     {/* Período de scoring */}
                     <select
                         value={scoringPeriod}
@@ -565,6 +644,21 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                                             <div className="flex items-center gap-2">
                                                 <div className={`w-2 h-6 rounded-full ${stockStatus.color}`} title={stockStatus.label}></div>
                                                 <span className="font-mono text-white font-medium text-sm">{product.sku}</span>
+                                                {/* Indicador de problemas de precios */}
+                                                {(() => {
+                                                    const pricingStatus = getPricingStatus(product);
+                                                    if (pricingStatus.severity === 'error') {
+                                                        return (
+                                                            <span 
+                                                                className="text-red-400 cursor-help" 
+                                                                title={pricingStatus.label}
+                                                            >
+                                                                {pricingStatus.icon}
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
                                             </div>
                                         </td>
                                     )}
@@ -588,8 +682,27 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                                         </td>
                                     )}
                                     {selectedColumns.cost_price && (
-                                        <td className="px-3 py-2 text-right font-mono text-gray-300 text-sm">
-                                            {formatCurrency(product.cost_price)}
+                                        <td className="px-3 py-2 text-right">
+                                            <div className="flex items-center justify-end gap-2">
+                                                <span className={`font-mono text-sm ${
+                                                    (!product.cost_price || product.cost_price <= 0) 
+                                                        ? 'text-red-400' 
+                                                        : 'text-gray-300'
+                                                }`}>
+                                                    {formatCurrency(product.cost_price)}
+                                                </span>
+                                                {(!product.cost_price || product.cost_price <= 0) && (
+                                                    <button
+                                                        onClick={() => handleSyncPrices(product.id)}
+                                                        className="p-1 text-yellow-400 hover:text-white hover:bg-yellow-500 rounded text-xs transition-colors"
+                                                        title="Sincronizar precio desde proveedor"
+                                                    >
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                                        </svg>
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     )}
                                     {selectedColumns.sale_price && (
