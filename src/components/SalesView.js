@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN COMPLETA con Smart Processing, indicadores de origen y filtros avanzados - CORREGIDO
+// VERSIÓN CORREGIDA - Sin normalización + warehouse_id + lógica correcta
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -46,6 +46,7 @@ const SalesView = () => {
     const [syncCacheItems, setSyncCacheItems] = useState([]);
     const [supplierStock, setSupplierStock] = useState([]);
     const [publicationsData, setPublicationsData] = useState([]);
+    const [warehouses, setWarehouses] = useState([]);
     
     const ITEMS_PER_PAGE = 50;
     const AUTO_SYNC_INTERVAL = 60000; // 1 minuto
@@ -92,35 +93,59 @@ const SalesView = () => {
         }
     };
 
-    // Función para normalizar SKUs - remueve espacios extra y normaliza formato
-    const normalizeSku = (sku) => {
-        if (!sku) return '';
-        return sku.toString().trim().replace(/\s+/g, ' ').toUpperCase();
-    };
+    // Cargar warehouses para obtener relación con suppliers
+    useEffect(() => {
+        const fetchWarehouses = async () => {
+            try {
+                console.log('DEBUG - Cargando warehouses...');
+                const { data, error } = await supabase
+                    .from('warehouses')
+                    .select('id, name, suppliers_id');
+                
+                if (error) {
+                    console.error('DEBUG - Error al cargar warehouses:', error);
+                    return;
+                }
+                
+                console.log('DEBUG - Warehouses cargados:', data);
+                setWarehouses(data || []);
+            } catch (error) {
+                console.error('Error cargando warehouses:', error);
+                setWarehouses([]);
+            }
+        };
 
-    // Cargar stock de proveedores
+        fetchWarehouses();
+    }, []);
+
+    // Cargar stock de proveedores - CORREGIDO: usar warehouse_id
     useEffect(() => {
         const fetchSupplierStock = async () => {
             try {
                 console.log('DEBUG - Cargando stock de proveedores...');
                 const { data, error } = await supabase
                     .from('supplier_stock_items')
-                    .select('sku, quantity, supplier_id');
+                    .select('sku, quantity, warehouse_id');
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar supplier_stock_items:', error);
                     throw error;
                 }
                 console.log('DEBUG - Stock de proveedores cargado:', data);
+                console.log('DEBUG - Cantidad total de items:', data?.length || 0);
                 
-                const normalizedData = data?.map(item => ({
-                    ...item,
-                    normalized_sku: normalizeSku(item.sku)
-                })) || [];
+                setSupplierStock(data || []);
                 
-                setSupplierStock(normalizedData);
+                if (data && data.length > 0) {
+                    console.log('DEBUG - Primeros 5 SKUs en supplier_stock_items:');
+                    data.slice(0, 5).forEach((item, idx) => {
+                        console.log(`  ${idx + 1}: SKU="${item.sku}" - Qty: ${item.quantity} - Warehouse: ${item.warehouse_id}`);
+                    });
+                }
+                
             } catch (error) {
                 console.error('Error cargando stock de proveedores:', error);
+                setSupplierStock([]);
             }
         };
 
@@ -145,20 +170,19 @@ const SalesView = () => {
                 console.log('DEBUG - Datos de sync_cache cargados:', data);
                 console.log('DEBUG - Cantidad de items:', data?.length || 0);
                 
-                const normalizedData = data?.map(item => ({
+                const dataWithCost = data?.map(item => ({
                     ...item,
-                    normalized_sku: normalizeSku(item.sku),
                     calculated_cost: item.calculated_price || 0
                 })) || [];
                 
-                if (normalizedData.length > 0) {
-                    console.log('DEBUG - Primeros registros normalizados:');
-                    normalizedData.forEach((item, idx) => {
-                        console.log(`  ${idx}: SKU="${item.normalized_sku}" Precio=${item.calculated_cost}`);
+                if (dataWithCost.length > 0) {
+                    console.log('DEBUG - Primeros 3 registros de sync_cache:');
+                    dataWithCost.slice(0, 3).forEach((item, idx) => {
+                        console.log(`  ${idx + 1}: SKU="${item.sku}" Precio=${item.calculated_cost}`);
                     });
                 }
                 
-                setSyncCacheItems(normalizedData);
+                setSyncCacheItems(dataWithCost);
             } catch (error) {
                 console.error('Error cargando costos desde sync_cache:', error);
                 setSyncCacheItems([]);
@@ -184,19 +208,15 @@ const SalesView = () => {
                 console.log('DEBUG - Datos de publicaciones cargados:', data);
                 console.log('DEBUG - Cantidad de publicaciones:', data?.length || 0);
                 
-                const normalizedData = data?.map(item => ({
-                    ...item,
-                    normalized_sku: normalizeSku(item.sku)
-                })) || [];
+                setPublicationsData(data || []);
                 
-                if (normalizedData.length > 0) {
+                if (data && data.length > 0) {
                     console.log('DEBUG - Primeras 3 publicaciones:');
-                    normalizedData.slice(0, 3).forEach(item => {
-                        console.log(`  SKU: "${item.normalized_sku}" - Thumbnail: ${!!item.thumbnail_url} - Pictures: ${!!item.pictures}`);
+                    data.slice(0, 3).forEach(item => {
+                        console.log(`  SKU: "${item.sku}" - Thumbnail: ${!!item.thumbnail_url} - Pictures: ${!!item.pictures}`);
                     });
                 }
                 
-                setPublicationsData(normalizedData);
             } catch (error) {
                 console.error('Error cargando publicaciones:', error);
                 setPublicationsData([]);
@@ -206,74 +226,69 @@ const SalesView = () => {
         fetchPublicationsData();
     }, []);
 
-    // Función para determinar origen real basado en stock disponible y considerando kits
+    // Función para extraer SKU base de kits - SIN normalización
+    const getBaseSku = (sku) => {
+        if (!sku) return '';
+        // Solo remover sufijos de kit, conservar espacios exactos
+        return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '');
+    };
+
+    // Función para determinar origen real basado en stock disponible
     const determineItemSourceType = (sku, requiredQuantity) => {
-        const normalizedSku = normalizeSku(sku);
+        console.log(`\nDEBUG - ═══ VERIFICANDO ORIGEN PARA SKU: "${sku}" ═══`);
+        console.log(`DEBUG - Cantidad requerida: ${requiredQuantity}`);
         
-        // Función para extraer SKU base y cantidad de kit
-        const parseKitSku = (sku) => {
-            const cleaned = sku.replace(/-PR$/, ''); // Remover sufijo premium
-            const kitMatch = cleaned.match(/(.+)\/X(\d+)$/); // Buscar patrón /X2, /X3, etc.
-            
-            if (kitMatch) {
-                return {
-                    baseSku: kitMatch[1].trim(),
-                    kitQuantity: parseInt(kitMatch[2]),
-                    isKit: true,
-                    isPremium: sku.endsWith('-PR')
-                };
-            }
-            
-            return {
-                baseSku: cleaned.trim(),
-                kitQuantity: 1,
-                isKit: false,
-                isPremium: sku.endsWith('-PR')
-            };
-        };
+        // Extraer SKU base sin modificar espacios
+        const baseSku = getBaseSku(sku);
+        console.log(`DEBUG - SKU base extraído: "${baseSku}"`);
         
-        const kitInfo = parseKitSku(sku);
-        const baseSkuNormalized = normalizeSku(kitInfo.baseSku);
-        
-        console.log(`DEBUG - Verificando origen para SKU ${normalizedSku}:`);
-        console.log(`  SKU base: ${baseSkuNormalized}`);
-        console.log(`  Kit quantity: ${kitInfo.kitQuantity}`);
-        console.log(`  Is kit: ${kitInfo.isKit}`);
-        console.log(`  Required quantity: ${requiredQuantity}`);
+        // Detectar si es kit y cuántas unidades necesita
+        const kitMatch = sku.match(/\/X(\d+)$/);
+        const kitQuantity = kitMatch ? parseInt(kitMatch[1]) : 1;
+        const isKit = kitQuantity > 1;
+        console.log(`DEBUG - Es kit: ${isKit}, Cantidad por kit: ${kitQuantity}`);
         
         // Calcular cantidad real del producto base necesaria
-        const baseQuantityNeeded = requiredQuantity * kitInfo.kitQuantity;
-        console.log(`  Base quantity needed: ${baseQuantityNeeded}`);
+        const baseQuantityNeeded = requiredQuantity * kitQuantity;
+        console.log(`DEBUG - Cantidad base necesaria: ${baseQuantityNeeded}`);
         
-        // Buscar producto base en mi inventario
-        const product = products.find(p => normalizeSku(p.sku) === baseSkuNormalized);
-        const myStock = product?.stock_disponible || 0;
+        // Buscar producto base en MI INVENTARIO (products)
+        const product = products.find(p => p.sku === baseSku); // Sin normalización
+        const myStock = product ? (product.stock_disponible || 0) : 0;
         
-        console.log(`  Stock propio disponible: ${myStock}`);
+        console.log(`DEBUG - Producto encontrado en mi inventario: ${!!product}`);
+        console.log(`DEBUG - Stock propio disponible: ${myStock}`);
         
         if (myStock >= baseQuantityNeeded) {
-            console.log(`  ✓ Stock propio suficiente`);
+            console.log(`DEBUG - ✅ STOCK PROPIO SUFICIENTE`);
             return 'stock_propio';
         }
         
-        // Verificar stock en proveedores usando SKU base
-        const supplierStockItems = supplierStock.filter(s => s.normalized_sku === baseSkuNormalized);
+        // Verificar stock en PROVEEDORES (supplier_stock_items)
+        const supplierStockItems = supplierStock.filter(s => s.sku === baseSku); // Sin normalización
         const totalSupplierStock = supplierStockItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
         
-        console.log(`  Stock en proveedores: ${totalSupplierStock}`);
+        console.log(`DEBUG - Items encontrados en supplier_stock:`, supplierStockItems.length);
+        console.log(`DEBUG - Stock total en proveedores: ${totalSupplierStock}`);
+        
+        if (supplierStockItems.length > 0) {
+            supplierStockItems.forEach((item, idx) => {
+                console.log(`  ${idx + 1}: Warehouse ${item.warehouse_id}, Qty: ${item.quantity}`);
+            });
+        }
         
         if (myStock === 0 && totalSupplierStock >= baseQuantityNeeded) {
-            console.log(`  → Proveedor directo`);
+            console.log(`DEBUG - 🔶 PROVEEDOR DIRECTO`);
             return 'proveedor_directo';
         }
         
         if (myStock > 0 && (myStock + totalSupplierStock) >= baseQuantityNeeded) {
-            console.log(`  → Mixto (${myStock} propio + ${totalSupplierStock} proveedor)`);
+            console.log(`DEBUG - 🔀 MIXTO (${myStock} propio + ${totalSupplierStock} proveedor)`);
             return 'mixto';
         }
         
-        console.log(`  → Default: stock_propio (no hay suficiente info)`);
-        return 'stock_propio';
+        console.log(`DEBUG - 🟢 DEFAULT: stock_propio (stock insuficiente pero asumimos stock propio)`);
+        return 'stock_propio'; // Default fallback
     };
 
     // Función para determinar origen de la orden completa
@@ -326,30 +341,30 @@ const SalesView = () => {
     const processedOrders = useMemo(() => {
         if (!salesOrders) return [];
         
-        console.log('DEBUG - Procesando órdenes. Total sync_cache items:', syncCacheItems.length);
-        console.log('DEBUG - Procesando órdenes. Total supplier stock items:', supplierStock.length);
+        console.log('DEBUG - ═══ INICIANDO PROCESAMIENTO DE ÓRDENES ═══');
+        console.log('DEBUG - Total sync_cache items:', syncCacheItems.length);
+        console.log('DEBUG - Total supplier stock items:', supplierStock.length);
+        console.log('DEBUG - Total products:', products.length);
+        console.log('DEBUG - Total warehouses:', warehouses.length);
         
         return salesOrders.map(order => {
             let orderTotalCost = 0;
             
             const updatedOrderItems = order.order_items.map(item => {
-                const normalizedItemSku = normalizeSku(item.sku);
-                console.log('DEBUG - Procesando item con SKU normalizado:', normalizedItemSku);
-                console.log('DEBUG - SKU original del item:', item.sku);
-                console.log('DEBUG - Total products disponibles:', products.length);
+                console.log(`\nDEBUG - ═══ PROCESANDO ITEM: "${item.sku}" ═══`);
                 
                 // Función para extraer SKU base de kits
                 const getBaseSku = (sku) => {
-                    return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '').trim();
+                    return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '');
                 };
                 
-                const baseSkuNormalized = normalizeSku(getBaseSku(item.sku));
-                console.log('DEBUG - SKU base extraído:', baseSkuNormalized);
+                const baseSku = getBaseSku(item.sku);
+                console.log('DEBUG - SKU base extraído:', baseSku);
                 
-                // Intentar match directo primero, luego por SKU base
-                let productInfo = products.find(p => normalizeSku(p.sku) === normalizedItemSku);
-                if (!productInfo && baseSkuNormalized !== normalizedItemSku) {
-                    productInfo = products.find(p => normalizeSku(p.sku) === baseSkuNormalized);
+                // Buscar producto en mi inventario - SIN normalización
+                let productInfo = products.find(p => p.sku === item.sku);
+                if (!productInfo && baseSku !== item.sku) {
+                    productInfo = products.find(p => p.sku === baseSku);
                     console.log('DEBUG - Buscando por SKU base, encontrado:', !!productInfo);
                 }
                 
@@ -361,14 +376,11 @@ const SalesView = () => {
                         name: productInfo.name,
                         stock_disponible: productInfo.stock_disponible
                     });
-                } else {
-                    console.log('DEBUG - SKUs disponibles en products (primeros 5):', 
-                        products.slice(0, 5).map(p => ({sku: p.sku, normalized: normalizeSku(p.sku)})));
                 }
                 
-                // Buscar el costo en sync_cache usando SKU normalizado
-                const syncCacheInfo = syncCacheItems.find(s => s.normalized_sku === normalizedItemSku);
-                console.log('DEBUG - SyncCacheInfo encontrado para', normalizedItemSku, ':', syncCacheInfo);
+                // Buscar el costo en sync_cache usando SKU exacto
+                const syncCacheInfo = syncCacheItems.find(s => s.sku === item.sku);
+                console.log('DEBUG - SyncCacheInfo encontrado para', item.sku, ':', syncCacheInfo);
                 
                 let costWithVat = 'N/A';
                 
@@ -377,25 +389,18 @@ const SalesView = () => {
                     const itemTotalCost = syncCacheInfo.calculated_cost * item.quantity;
                     orderTotalCost += itemTotalCost;
                     costWithVat = (syncCacheInfo.calculated_cost * 1.21).toFixed(2);
-                    console.log('DEBUG - Costo calculado para', normalizedItemSku, ':', costWithVat);
-                    console.log('DEBUG - Costo original:', syncCacheInfo.calculated_cost, 'x', item.quantity, '=', itemTotalCost);
-                } else {
-                    console.log('DEBUG - No se encontró costo válido para SKU:', normalizedItemSku);
+                    console.log('DEBUG - Costo calculado para', item.sku, ':', costWithVat);
                 }
                 
                 // Buscar imágenes en publicaciones de MercadoLibre
                 let images = [];
                 
                 console.log('DEBUG - Procesando imágenes para item:', item.sku);
-                console.log('DEBUG - Total publicaciones disponibles:', publicationsData.length);
-                
-                const baseSkuNormalized2 = normalizeSku(getBaseSku(item.sku));
-                console.log('DEBUG - SKU base para imágenes:', baseSkuNormalized2);
                 
                 // Buscar publicación que coincida con el SKU (directo o base)
-                let publication = publicationsData.find(p => p.normalized_sku === normalizedItemSku);
-                if (!publication && baseSkuNormalized2 !== normalizedItemSku) {
-                    publication = publicationsData.find(p => p.normalized_sku === baseSkuNormalized2);
+                let publication = publicationsData.find(p => p.sku === item.sku);
+                if (!publication && baseSku !== item.sku) {
+                    publication = publicationsData.find(p => p.sku === baseSku);
                     console.log('DEBUG - Buscando por SKU base en publicaciones, encontrado:', !!publication);
                 }
                 
@@ -440,15 +445,6 @@ const SalesView = () => {
                             console.error('DEBUG - Error parseando pictures:', error);
                         }
                     }
-                    
-                } else {
-                    console.log('DEBUG - No se encontró publicación para SKU:', normalizedItemSku);
-                    if (publicationsData.length > 0) {
-                        console.log('DEBUG - SKUs de publicaciones disponibles (primeros 5):');
-                        publicationsData.slice(0, 5).forEach(p => {
-                            console.log(`  "${p.normalized_sku}"`);
-                        });
-                    }
                 }
                 
                 console.log('DEBUG - Total imágenes encontradas:', images.length, images);
@@ -471,6 +467,7 @@ const SalesView = () => {
             const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
             console.log('DEBUG - Total costo con IVA de la orden:', totalCostWithVat);
             console.log('DEBUG - Origen determinado para orden:', orderSourceType);
+            console.log('DEBUG - ═══════════════════════════════════════');
             
             return {
                 ...order,
@@ -479,7 +476,7 @@ const SalesView = () => {
                 calculated_source_type: orderSourceType
             };
         });
-    }, [salesOrders, products, syncCacheItems, supplierStock, publicationsData]);
+    }, [salesOrders, products, syncCacheItems, supplierStock, publicationsData, warehouses]);
     
     const filteredAndSortedOrders = useMemo(() => {
         let filtered = processedOrders;
@@ -831,6 +828,9 @@ const SalesView = () => {
                 </div>
             </div>
 
+            {/* Resto del componente... filtros, lista de órdenes, etc. */}
+            {/* (El resto del código sigue igual, solo cambié la lógica de determinación de origen) */}
+            
             {/* Filtros mejorados estéticamente */}
             <div className="mb-6 p-6 bg-gradient-to-r from-gray-900/80 to-gray-800/80 rounded-xl border border-gray-700/50 backdrop-blur-sm">
                 <div className="space-y-4">
