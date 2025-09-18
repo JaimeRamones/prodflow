@@ -389,10 +389,6 @@ const SalesView = () => {
                 console.log('DEBUG - Procesando imágenes para item:', item.sku);
                 console.log('DEBUG - Total publicaciones disponibles:', publicationsData.length);
                 
-                const getBaseSku = (sku) => {
-                    return sku.replace(/\/X\d+$/, '').replace(/-PR$/, '').trim();
-                };
-                
                 const baseSkuNormalized2 = normalizeSku(getBaseSku(item.sku));
                 console.log('DEBUG - SKU base para imágenes:', baseSkuNormalized2);
                 
