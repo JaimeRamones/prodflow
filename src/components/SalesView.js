@@ -205,6 +205,45 @@ const SalesView = () => {
             }
         };
 
+        fetchSyncCacheItems();
+    }, []);
+
+    // NUEVO: Cargar datos de publicaciones para obtener imágenes
+    useEffect(() => {
+        const fetchPublicationsData = async () => {
+            try {
+                console.log('DEBUG - Cargando datos de publicaciones...');
+                const { data, error } = await supabase
+                    .from('mercadolibre_listings')
+                    .select('sku, thumbnail_url, pictures');
+                
+                if (error) {
+                    console.error('DEBUG - Error al cargar publicaciones:', error);
+                    throw error;
+                }
+                console.log('DEBUG - Datos de publicaciones cargados:', data);
+                console.log('DEBUG - Cantidad de publicaciones:', data?.length || 0);
+                
+                // Normalizar SKUs para mejor matching
+                const normalizedData = data?.map(item => ({
+                    ...item,
+                    normalized_sku: normalizeSku(item.sku)
+                })) || [];
+                
+                if (normalizedData.length > 0) {
+                    console.log('DEBUG - Primeras 3 publicaciones:');
+                    normalizedData.slice(0, 3).forEach(item => {
+                        console.log(`  SKU: "${item.normalized_sku}" - Thumbnail: ${!!item.thumbnail_url} - Pictures: ${!!item.pictures}`);
+                    });
+                }
+                
+                setPublicationsData(normalizedData);
+            } catch (error) {
+                console.error('Error cargando publicaciones:', error);
+                setPublicationsData([]);
+            }
+        };
+
         fetchPublicationsData();
     }, []);
 
