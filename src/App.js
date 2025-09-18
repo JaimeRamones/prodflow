@@ -224,7 +224,17 @@ const MobileNav = ({ isOpen, onClose, currentPath, onLogout }) => {
             <div className="fixed top-0 left-0 w-64 h-full bg-gray-800 border-r border-gray-700 overflow-y-auto">
                 <div className="p-4">
                     <div className="flex items-center justify-between mb-6">
-                        <span className="text-xl font-semibold text-white">ProdFlow</span>
+                        <div className="flex items-center">
+                            <img 
+                                src="/logo.png" 
+                                alt="ProdFlow Logo" 
+                                className="w-8 h-8 mr-2"
+                                onError={(e) => {
+                                    e.target.style.display = 'none';
+                                }}
+                            />
+                            <span className="text-xl font-semibold text-white">ProdFlow</span>
+                        </div>
                         <button onClick={onClose} className="text-gray-400 hover:text-white">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -356,7 +366,17 @@ const AppContent = () => {
                 >
                     <HamburgerIcon />
                 </button>
-                <span className="text-lg font-semibold text-white">ProdFlow</span>
+                <div className="flex items-center">
+                    <img 
+                        src="/logo.png" 
+                        alt="ProdFlow Logo" 
+                        className="w-6 h-6 mr-2"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                        }}
+                    />
+                    <span className="text-lg font-semibold text-white">ProdFlow</span>
+                </div>
                 <div className="w-6"></div>
             </div>
 
@@ -372,7 +392,15 @@ const AppContent = () => {
             <aside className="hidden md:fixed md:top-0 md:left-0 md:z-40 md:w-64 md:h-screen md:transition-transform md:bg-gray-800 md:border-r md:border-gray-700 md:block">
                 <div className="h-full px-3 py-4 overflow-y-auto bg-gray-800">
                     <div className="flex items-center pl-2.5 mb-5">
-                        <span className="self-center text-xl font-semibold whitespace-nowrap text-white ml-3">ProdFlow</span>
+                        <img 
+                            src="/logo.png" 
+                            alt="ProdFlow Logo" 
+                            className="w-8 h-8 mr-3"
+                            onError={(e) => {
+                                e.target.style.display = 'none';
+                            }}
+                        />
+                        <span className="self-center text-xl font-semibold whitespace-nowrap text-white">ProdFlow</span>
                     </div>
                     <ul className="space-y-2">
                         <NavButton to="/dashboard" iconPath="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z">Dashboard</NavButton>
