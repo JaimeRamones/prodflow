@@ -287,20 +287,52 @@ const SalesView = () => {
                 // Manejar imágenes de forma segura
                 let images = [];
                 
+                console.log('DEBUG - Procesando imágenes para item:', item.sku);
+                console.log('DEBUG - item.thumbnail_url:', item.thumbnail_url);
+                console.log('DEBUG - productInfo encontrado:', !!productInfo);
+                console.log('DEBUG - productInfo.image_urls:', productInfo?.image_urls);
+                
                 // 1. Thumbnail de la orden (más confiable)
                 if (item.thumbnail_url) {
                     const secureThumbnail = item.thumbnail_url.replace(/^http:/, 'https:');
                     images.push(secureThumbnail);
+                    console.log('DEBUG - Agregada thumbnail:', secureThumbnail);
                 }
                 
                 // 2. Imágenes del producto en base de datos
-                if (productInfo?.image_urls && Array.isArray(productInfo.image_urls)) {
-                    const productImages = productInfo.image_urls
-                        .filter(url => url && url.trim() !== '')
-                        .map(url => url.replace(/^http:/, 'https:'))
-                        .filter(url => !images.includes(url)); // Evitar duplicados
-                    images.push(...productImages);
+                if (productInfo?.image_urls) {
+                    console.log('DEBUG - Tipo de image_urls:', typeof productInfo.image_urls);
+                    console.log('DEBUG - Es array?:', Array.isArray(productInfo.image_urls));
+                    
+                    let productImages = [];
+                    
+                    // Manejar diferentes formatos de image_urls
+                    if (Array.isArray(productInfo.image_urls)) {
+                        productImages = productInfo.image_urls;
+                    } else if (typeof productInfo.image_urls === 'string') {
+                        try {
+                            // Intentar parsear JSON si es string
+                            productImages = JSON.parse(productInfo.image_urls);
+                        } catch {
+                            // Si no es JSON, tratarlo como URL simple
+                            productImages = [productInfo.image_urls];
+                        }
+                    }
+                    
+                    console.log('DEBUG - productImages procesadas:', productImages);
+                    
+                    if (Array.isArray(productImages)) {
+                        const validImages = productImages
+                            .filter(url => url && url.trim() !== '')
+                            .map(url => url.replace(/^http:/, 'https:'))
+                            .filter(url => !images.includes(url)); // Evitar duplicados
+                        
+                        images.push(...validImages);
+                        console.log('DEBUG - Imágenes válidas agregadas:', validImages);
+                    }
                 }
+                
+                console.log('DEBUG - Total imágenes encontradas:', images.length, images);
                 
                 // NUEVO: Determinar origen real del item
                 const itemSourceType = determineItemSourceType(item.sku, item.quantity);
@@ -949,18 +981,24 @@ const SalesView = () => {
                                                         className="w-16 h-16 object-cover rounded-md border border-gray-600 cursor-pointer" 
                                                         onClick={() => setZoomedImageUrl(item.images[0])}
                                                         onError={(e) => {
+                                                            console.error('Error cargando imagen:', item.images[0]);
                                                             e.target.style.display = 'none';
-                                                            e.target.nextSibling.style.display = 'flex';
+                                                            const placeholder = e.target.parentElement.querySelector('.image-placeholder');
+                                                            if (placeholder) placeholder.style.display = 'flex';
+                                                        }}
+                                                        onLoad={() => {
+                                                            console.log('Imagen cargada exitosamente:', item.images[0]);
                                                         }}
                                                     />
                                                 ) : null}
                                                 <div 
-                                                    className="w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center" 
+                                                    className="image-placeholder w-16 h-16 bg-gray-700 rounded-md border border-gray-600 flex items-center justify-center" 
                                                     style={{display: item.images && item.images.length > 0 ? 'none' : 'flex'}}
                                                 >
                                                     <svg className="w-8 h-8 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
                                                     </svg>
+                                                    <span className="text-xs text-gray-400 absolute mt-12">Sin imagen</span>
                                                 </div>
                                             </div>
                                             
