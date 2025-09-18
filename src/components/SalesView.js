@@ -132,75 +132,116 @@ const SalesView = () => {
         const fetchSyncCacheItems = async () => {
             try {
                 console.log('DEBUG - Iniciando carga de sync_cache...');
+                
+                // CORREGIDO: Usar la estructura real de sync_cache
                 const { data, error } = await supabase
                     .from('sync_cache')
-                    .select('meli_sku, calculated_cost');
+                    .select('sku, calculated_price');
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar sync_cache:', error);
-                    throw error;
+                    setSyncCacheItems([]);
+                    return;
                 }
+                
                 console.log('DEBUG - Datos de sync_cache cargados:', data);
                 console.log('DEBUG - Cantidad de items:', data?.length || 0);
                 
-                // Normalizar SKUs y mostrar algunos ejemplos
+                // Normalizar datos con la estructura correcta
                 const normalizedData = data?.map(item => ({
                     ...item,
-                    normalized_sku: normalizeSku(item.meli_sku)
+                    normalized_sku: normalizeSku(item.sku),
+                    calculated_cost: item.calculated_price || 0 // CORREGIDO: usar calculated_price
                 })) || [];
                 
                 if (normalizedData.length > 0) {
-                    console.log('DEBUG - Primeros 5 SKUs encontrados (normalizados):');
-                    normalizedData.slice(0, 5).forEach(item => {
-                        console.log(`  Original: "${item.meli_sku}" -> Normalizado: "${item.normalized_sku}" -> Costo: ${item.calculated_cost}`);
+                    console.log('DEBUG - Primeros registros normalizados:');
+                    normalizedData.forEach((item, idx) => {
+                        console.log(`  ${idx}: SKU="${item.normalized_sku}" Precio=${item.calculated_cost}`);
                     });
                 }
                 
                 setSyncCacheItems(normalizedData);
             } catch (error) {
-                console.error('Error cargando costos desde sync_cache:', error);
+                console.error('Error general cargando sync_cache:', error);
+                setSyncCacheItems([]);
             }
         };
 
         fetchSyncCacheItems();
     }, []);
 
-    // NUEVA FUNCIÓN: Determinar origen real basado en stock disponible
+    // CORREGIDA: Función para determinar origen real basado en stock disponible y considerando kits
     const determineItemSourceType = (sku, requiredQuantity) => {
         const normalizedSku = normalizeSku(sku);
         
-        // Buscar producto en mi inventario
-        const product = products.find(p => normalizeSku(p.sku) === normalizedSku);
+        // Función para extraer SKU base y cantidad de kit
+        const parseKitSku = (sku) => {
+            const cleaned = sku.replace(/-PR$/, ''); // Remover sufijo premium
+            const kitMatch = cleaned.match(/(.+)\/X(\d+)$/); // Buscar patrón /X2, /X3, etc.
+            
+            if (kitMatch) {
+                return {
+                    baseSku: kitMatch[1].trim(),
+                    kitQuantity: parseInt(kitMatch[2]),
+                    isKit: true,
+                    isPremium: sku.endsWith('-PR')
+                };
+            }
+            
+            return {
+                baseSku: cleaned.trim(),
+                kitQuantity: 1,
+                isKit: false,
+                isPremium: sku.endsWith('-PR')
+            };
+        };
+        
+        const kitInfo = parseKitSku(sku);
+        const baseSkuNormalized = normalizeSku(kitInfo.baseSku);
+        
+        console.log(`DEBUG - Verificando origen para SKU ${normalizedSku}:`);
+        console.log(`  SKU base: ${baseSkuNormalized}`);
+        console.log(`  Kit quantity: ${kitInfo.kitQuantity}`);
+        console.log(`  Is kit: ${kitInfo.isKit}`);
+        console.log(`  Required quantity: ${requiredQuantity}`);
+        
+        // Calcular cantidad real del producto base necesaria
+        const baseQuantityNeeded = requiredQuantity * kitInfo.kitQuantity;
+        console.log(`  Base quantity needed: ${baseQuantityNeeded}`);
+        
+        // Buscar producto base en mi inventario
+        const product = products.find(p => normalizeSku(p.sku) === baseSkuNormalized);
         const myStock = product?.stock_disponible || 0;
         
-        console.log(`DEBUG - Verificando origen para SKU ${normalizedSku}: Stock propio=${myStock}, Requerido=${requiredQuantity}`);
+        console.log(`  Stock propio disponible: ${myStock}`);
         
-        if (myStock >= requiredQuantity) {
+        if (myStock >= baseQuantityNeeded) {
             // Tengo suficiente stock propio
             console.log(`  ✓ Stock propio suficiente`);
             return 'stock_propio';
         }
         
-        // Verificar stock en proveedores
-        const supplierStockItems = supplierStock.filter(s => s.normalized_sku === normalizedSku);
+        // Verificar stock en proveedores usando SKU base
+        const supplierStockItems = supplierStock.filter(s => s.normalized_sku === baseSkuNormalized);
         const totalSupplierStock = supplierStockItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
         
         console.log(`  Stock en proveedores: ${totalSupplierStock}`);
         
-        if (myStock === 0 && totalSupplierStock >= requiredQuantity) {
+        if (myStock === 0 && totalSupplierStock >= baseQuantityNeeded) {
             // No tengo stock pero sí hay en proveedores
             console.log(`  → Proveedor directo`);
             return 'proveedor_directo';
         }
         
-        if (myStock > 0 && (myStock + totalSupplierStock) >= requiredQuantity) {
+        if (myStock > 0 && (myStock + totalSupplierStock) >= baseQuantityNeeded) {
             // Tengo algo de stock pero necesito completar con proveedor
             console.log(`  → Mixto (${myStock} propio + ${totalSupplierStock} proveedor)`);
             return 'mixto';
         }
         
         // Por defecto, asumir stock propio si no hay claridad
-        console.log(`  → Default: stock_propio`);
+        console.log(`  → Default: stock_propio (no hay suficiente info)`);
         return 'stock_propio';
     };
 
@@ -263,9 +304,24 @@ const SalesView = () => {
             const updatedOrderItems = order.order_items.map(item => {
                 const normalizedItemSku = normalizeSku(item.sku);
                 console.log('DEBUG - Procesando item con SKU normalizado:', normalizedItemSku);
+                console.log('DEBUG - SKU original del item:', item.sku);
+                console.log('DEBUG - Total products disponibles:', products.length);
                 
                 // Buscar el producto por SKU para imágenes
+                console.log('DEBUG - Buscando producto para SKU:', normalizedItemSku);
+                console.log('DEBUG - SKUs disponibles en products (primeros 5):', products.slice(0, 5).map(p => ({sku: p.sku, normalized: normalizeSku(p.sku)})));
+                
                 const productInfo = products.find(p => normalizeSku(p.sku) === normalizedItemSku);
+                console.log('DEBUG - Producto encontrado:', !!productInfo);
+                if (productInfo) {
+                    console.log('DEBUG - Datos del producto encontrado:', {
+                        id: productInfo.id,
+                        sku: productInfo.sku,
+                        name: productInfo.name,
+                        image_urls: productInfo.image_urls,
+                        image_urls_type: typeof productInfo.image_urls
+                    });
+                }
                 
                 // Buscar el costo en sync_cache usando SKU normalizado
                 const syncCacheInfo = syncCacheItems.find(s => s.normalized_sku === normalizedItemSku);
@@ -284,53 +340,24 @@ const SalesView = () => {
                     console.log('DEBUG - No se encontró costo válido para SKU:', normalizedItemSku);
                 }
                 
-                // Manejar imágenes de forma segura
+                // CORREGIDO: Manejar imágenes sin depender de image_urls en products
                 let images = [];
                 
                 console.log('DEBUG - Procesando imágenes para item:', item.sku);
                 console.log('DEBUG - item.thumbnail_url:', item.thumbnail_url);
                 console.log('DEBUG - productInfo encontrado:', !!productInfo);
-                console.log('DEBUG - productInfo.image_urls:', productInfo?.image_urls);
                 
-                // 1. Thumbnail de la orden (más confiable)
+                // 1. Thumbnail de la orden (fuente principal y más confiable)
                 if (item.thumbnail_url) {
                     const secureThumbnail = item.thumbnail_url.replace(/^http:/, 'https:');
                     images.push(secureThumbnail);
                     console.log('DEBUG - Agregada thumbnail:', secureThumbnail);
+                } else {
+                    console.log('DEBUG - No hay thumbnail_url disponible');
                 }
                 
-                // 2. Imágenes del producto en base de datos
-                if (productInfo?.image_urls) {
-                    console.log('DEBUG - Tipo de image_urls:', typeof productInfo.image_urls);
-                    console.log('DEBUG - Es array?:', Array.isArray(productInfo.image_urls));
-                    
-                    let productImages = [];
-                    
-                    // Manejar diferentes formatos de image_urls
-                    if (Array.isArray(productInfo.image_urls)) {
-                        productImages = productInfo.image_urls;
-                    } else if (typeof productInfo.image_urls === 'string') {
-                        try {
-                            // Intentar parsear JSON si es string
-                            productImages = JSON.parse(productInfo.image_urls);
-                        } catch {
-                            // Si no es JSON, tratarlo como URL simple
-                            productImages = [productInfo.image_urls];
-                        }
-                    }
-                    
-                    console.log('DEBUG - productImages procesadas:', productImages);
-                    
-                    if (Array.isArray(productImages)) {
-                        const validImages = productImages
-                            .filter(url => url && url.trim() !== '')
-                            .map(url => url.replace(/^http:/, 'https:'))
-                            .filter(url => !images.includes(url)); // Evitar duplicados
-                        
-                        images.push(...validImages);
-                        console.log('DEBUG - Imágenes válidas agregadas:', validImages);
-                    }
-                }
+                // 2. NOTA: products no tiene image_urls según la DB, omitir esta sección
+                console.log('DEBUG - Omitiendo búsqueda de image_urls (no existe en products)');
                 
                 console.log('DEBUG - Total imágenes encontradas:', images.length, images);
                 
