@@ -339,12 +339,22 @@ const SalesView = () => {
                 };
             });
             
-            // USAR EL SOURCE_TYPE YA CALCULADO POR SMART-PROCESS-ORDER
-            const orderSourceType = order.source_type || 'stock_propio';
+            // CALCULAR EL SOURCE_TYPE CORRECTO DE LA ORDEN basado en los items
+            const itemSourceTypes = updatedOrderItems.map(item => 
+                item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio'
+            );
             
-            const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
+            const uniqueSourceTypes = [...new Set(itemSourceTypes)];
             
-            console.log(`DEBUG - Orden ${order.meli_order_id} - Origen: ${orderSourceType} (guardado en BD)`);
+            let orderSourceType;
+            if (uniqueSourceTypes.length > 1) {
+                orderSourceType = 'mixto'; // Algunos de stock, algunos de proveedor
+            } else {
+                orderSourceType = uniqueSourceTypes[0] || 'stock_propio';
+            }
+            
+            console.log(`DEBUG - Items source types: [${itemSourceTypes.join(', ')}]`);
+            console.log(`DEBUG - Orden ${order.meli_order_id} - Origen calculado: ${orderSourceType}`);
             
             return {
                 ...order,
@@ -1000,8 +1010,8 @@ const SalesView = () => {
                                                     <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
                                                         SKU: {item.sku || 'N/A'}
                                                     </p>
-                                                    {/* ELIMINADO: Chip de origen individual por item */}
-                                                    {/* Solo mostramos la etiqueta a nivel de orden completa */}
+                                                    {/* Mostrar origen del item individual */}
+                                                    {getSourceChip(item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio')}
                                                 </div>
                                             </div>
                                             
