@@ -100,7 +100,7 @@ const SalesView = () => {
                 console.log('DEBUG - Cargando warehouses...');
                 const { data, error } = await supabase
                     .from('warehouses')
-                    .select('id, name, suppliers_id');
+                    .select('id, name, supplier_id');
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar warehouses:', error);
