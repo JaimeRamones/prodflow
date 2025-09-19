@@ -1,5 +1,5 @@
 // Ruta: src/components/SalesView.js
-// VERSIÓN CORREGIDA - Sin normalización + warehouse_id + lógica correcta
+// VERSIÓN CORREGIDA - Sin normalización + warehouse_id + lógica correcta + DEBUG
 
 import React, { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import { AppContext } from '../App';
@@ -118,14 +118,21 @@ const SalesView = () => {
         fetchWarehouses();
     }, []);
 
-    // Cargar stock de proveedores - CORREGIDO: usar warehouse_id
+    // Cargar stock de proveedores - CORREGIDO: usar warehouse_id + DEBUG
     useEffect(() => {
         const fetchSupplierStock = async () => {
             try {
                 console.log('DEBUG - Cargando stock de proveedores...');
+                
+                // Agregar debug para ver el resultado de la query
                 const { data, error } = await supabase
                     .from('supplier_stock_items')
                     .select('sku, quantity, warehouse_id');
+                
+                console.log('DEBUG - Resultado de la query supplier_stock_items:');
+                console.log('- Error:', error);
+                console.log('- Data length:', data?.length || 0);
+                console.log('- Primeros 3 registros:', data?.slice(0, 3));
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar supplier_stock_items:', error);
@@ -135,6 +142,13 @@ const SalesView = () => {
                 console.log('DEBUG - Cantidad total de items:', data?.length || 0);
                 
                 setSupplierStock(data || []);
+                
+                // Agregar debug después de setear los datos
+                console.log('DEBUG - supplier_stock_items cargados:', data?.length || 0);
+                console.log('DEBUG - primer registro:', data?.[0]);
+                if (!data || data?.length === 0) {
+                    console.error('DEBUG - No se cargaron datos de supplier_stock_items!');
+                }
                 
                 if (data && data.length > 0) {
                     console.log('DEBUG - Primeros 5 SKUs en supplier_stock_items:');
