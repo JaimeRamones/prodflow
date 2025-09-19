@@ -356,6 +356,9 @@ const SalesView = () => {
             console.log(`DEBUG - Items source types: [${itemSourceTypes.join(', ')}]`);
             console.log(`DEBUG - Orden ${order.meli_order_id} - Origen calculado: ${orderSourceType}`);
             
+            // Calcular total con IVA
+            const totalCostWithVat = orderTotalCost > 0 ? (orderTotalCost * 1.21).toFixed(2) : 0;
+            
             return {
                 ...order,
                 order_items: updatedOrderItems,
