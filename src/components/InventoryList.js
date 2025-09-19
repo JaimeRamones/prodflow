@@ -2,6 +2,7 @@ import React, { useState, useContext, useMemo, useCallback, useEffect } from 're
 import { AppContext } from '../App';
 import { supabase } from '../supabaseClient';
 import ExcelImportExport from './ExcelImportExport';
+import ProductDetailModal from './ProductDetailModal';
 
 const InventoryList = ({ onEdit, onDelete, onPublish }) => {
     const { products, showMessage, suppliers } = useContext(AppContext);
@@ -32,6 +33,10 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
     const [productEquivalents, setProductEquivalents] = useState([]);
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
+    
+    // Estados para el modal de detalle del producto
+    const [selectedProductForDetail, setSelectedProductForDetail] = useState(null);
+    const [showProductDetail, setShowProductDetail] = useState(false);
     
     const productsPerPage = 50;
 
@@ -212,9 +217,7 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                 alternatives: alternatives,
                 oem_references: oemRefs,
                 has_alternatives: alternatives.length > 0,
-                alternatives_in_stock: alternatives.filter(alt => (alt.stock_disponible || 0) > 0).length,
-                // Marcar propiedades como no persistibles
-                _computed_fields: ['movement_score', 'scoring_details', 'supplier_name', 'alternatives_count', 'alternatives', 'oem_references', 'has_alternatives', 'alternatives_in_stock']
+                alternatives_in_stock: alternatives.filter(alt => (alt.stock_disponible || 0) > 0).length
             };
         });
     }, [products, calculateProductScore, getProductAlternatives, suppliers, productReferences]);
@@ -426,7 +429,7 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
 
     // Función para limpiar el producto antes de enviarlo al modal de edición
     const cleanProductForEdit = (product) => {
-        // Eliminar propiedades calculadas que no pertenecen a la tabla products
+        // Eliminar SOLO las propiedades calculadas de UI que no pertenecen a la tabla products
         const {
             movement_score,
             scoring_details,
@@ -436,11 +439,21 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
             oem_references,
             has_alternatives,
             alternatives_in_stock,
-            _computed_fields,
             ...cleanProduct
         } = product;
         
         return cleanProduct;
+    };
+
+    // Funciones para manejar el modal de detalle
+    const handleProductDetail = (product) => {
+        setSelectedProductForDetail(product); // Pasamos el producto completo con todas las propiedades
+        setShowProductDetail(true);
+    };
+
+    const handleCloseProductDetail = () => {
+        setShowProductDetail(false);
+        setSelectedProductForDetail(null);
     };
 
     return (
@@ -664,7 +677,13 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                                         <td className="px-3 py-2">
                                             <div className="flex items-center gap-2">
                                                 <div className={`w-2 h-6 rounded-full ${stockStatus.color}`} title={stockStatus.label}></div>
-                                                <span className="font-mono text-white font-medium text-sm">{product.sku}</span>
+                                                <button 
+                                                    onClick={() => handleProductDetail(product)}
+                                                    className="font-mono text-white font-medium text-sm hover:text-blue-400 hover:underline cursor-pointer transition-colors"
+                                                    title="Ver información detallada"
+                                                >
+                                                    {product.sku}
+                                                </button>
                                                 {/* Indicador de problemas de precios */}
                                                 {(() => {
                                                     const pricingStatus = getPricingStatus(product);
@@ -943,6 +962,19 @@ const InventoryList = ({ onEdit, onDelete, onPublish }) => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Modal de detalle del producto */}
+            {showProductDetail && selectedProductForDetail && (
+                <ProductDetailModal
+                    product={selectedProductForDetail}
+                    onClose={handleCloseProductDetail}
+                    onEdit={(product) => {
+                        handleCloseProductDetail();
+                        onEdit(cleanProductForEdit(product));
+                    }}
+                    onSyncPrice={handleSyncPrices}
+                />
             )}
         </div>
     );
