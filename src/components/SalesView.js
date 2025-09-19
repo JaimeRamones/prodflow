@@ -129,11 +129,13 @@ const SalesView = () => {
                 
                 const { data, error } = await supabase
                     .from('supplier_stock_items')
-                    .select('sku, quantity, warehouse_id');
+                    .select('sku, quantity, warehouse_id')
+                    .limit(10000);
                 
                 console.log('DEBUG - Resultado de la query supplier_stock_items:');
                 console.log('- Error:', error);
                 console.log('- Data length:', data?.length || 0);
+                console.log('- Primeros 3 registros:', data?.slice(0, 3));
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar supplier_stock_items:', error);
@@ -141,6 +143,7 @@ const SalesView = () => {
                 }
                 
                 setSupplierStock(data || []);
+                console.log('DEBUG - Stock de proveedores cargado exitosamente:', data?.length || 0);
                 
             } catch (error) {
                 console.error('Error cargando stock de proveedores:', error);
@@ -158,7 +161,8 @@ const SalesView = () => {
                 console.log('DEBUG - Iniciando carga de sync_cache...');
                 const { data, error } = await supabase
                     .from('sync_cache')
-                    .select('sku, calculated_price');
+                    .select('sku, calculated_price')
+                    .limit(10000); // Aumentar límite
                 
                 if (error) {
                     console.error('DEBUG - Error al cargar sync_cache:', error);
@@ -996,8 +1000,8 @@ const SalesView = () => {
                                                     <p className="text-sm text-gray-400 font-mono bg-gray-700 inline-block px-2 py-0.5 rounded">
                                                         SKU: {item.sku || 'N/A'}
                                                     </p>
-                                                    {/* Mostrar origen del item basado en cálculo real */}
-                                                    {getSourceChip(item.source_type || 'stock_propio')}
+                                                    {/* ELIMINADO: Chip de origen individual por item */}
+                                                    {/* Solo mostramos la etiqueta a nivel de orden completa */}
                                                 </div>
                                             </div>
                                             

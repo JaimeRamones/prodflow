@@ -63,66 +63,146 @@ serve(async (req) => {
     for (const item of order.order_items) {
       const product = item.products
       
-      if (!product) {
-        console.log(`Producto no encontrado para item: ${item.sku}`)
-        hasStockIssues = true
-        continue
-      }
+      console.log(`\nProcesando item: ${item.sku}`)
+      
+      // CASO 1: Producto existe en mi inventario (products)
+      if (product) {
+        const availableStock = product.stock_disponible || 0
+        const requiredQuantity = item.quantity
 
-      const availableStock = product.stock_disponible || 0
-      const requiredQuantity = item.quantity
+        console.log(`Item ${item.sku}: Disponible=${availableStock}, Requerido=${requiredQuantity}`)
 
-      console.log(`Item ${item.sku}: Disponible=${availableStock}, Requerido=${requiredQuantity}`)
+        if (availableStock >= requiredQuantity) {
+          // HAY STOCK - Reservar del inventario
+          console.log(`✓ Stock disponible para ${item.sku}`)
+          
+          stockUpdates.push({
+            productId: product.id,
+            newDisponible: availableStock - requiredQuantity,
+            newReservado: (product.stock_reservado || 0) + requiredQuantity
+          })
 
-      if (availableStock >= requiredQuantity) {
-        // HAY STOCK - Reservar del inventario
-        console.log(`✓ Stock disponible para ${item.sku}`)
+          orderItemUpdates.push({
+            itemId: item.id,
+            assigned_supplier_id: null // Sale de nuestro stock
+          })
+
+        } else {
+          // NO HAY STOCK SUFICIENTE - Crear pedido a proveedor
+          console.log(`✗ Stock insuficiente para ${item.sku}. Creando pedido a proveedor`)
+          hasStockIssues = true
+
+          if (!product.supplier_id) {
+            console.log(`⚠️ Producto ${item.sku} no tiene proveedor asignado`)
+            continue
+          }
+
+          const supplierId = product.supplier_id
+          const supplierName = product.suppliers?.name || 'Proveedor desconocido'
+
+          // Agrupar por proveedor
+          if (!supplierOrders.has(supplierId)) {
+            supplierOrders.set(supplierId, {
+              supplier_id: supplierId,
+              supplier_name: supplierName,
+              items: []
+            })
+          }
+
+          supplierOrders.get(supplierId).items.push({
+            product_id: product.id,
+            sku: item.sku,
+            quantity_needed: requiredQuantity,
+            current_stock: availableStock,
+            quantity_to_order: requiredQuantity - availableStock
+          })
+
+          orderItemUpdates.push({
+            itemId: item.id,
+            assigned_supplier_id: supplierId
+          })
+        }
+      } 
+      // CASO 2: Producto NO existe en mi inventario - Buscar en proveedores
+      else {
+        console.log(`Producto ${item.sku} no encontrado en inventario propio. Buscando en proveedores...`)
         
-        stockUpdates.push({
-          productId: product.id,
-          newDisponible: availableStock - requiredQuantity,
-          newReservado: (product.stock_reservado || 0) + requiredQuantity
-        })
+        // Buscar en supplier_stock_items (consulta simplificada)
+        const { data: supplierStockData, error: supplierError } = await supabase
+          .from('supplier_stock_items')
+          .select('sku, quantity, warehouse_id')
+          .eq('sku', item.sku)
 
-        orderItemUpdates.push({
-          itemId: item.id,
-          assigned_supplier_id: null // Sale de nuestro stock
-        })
-
-      } else {
-        // NO HAY STOCK - Crear pedido a proveedor
-        console.log(`✗ Stock insuficiente para ${item.sku}. Creando pedido a proveedor`)
-        hasStockIssues = true
-
-        if (!product.supplier_id) {
-          console.log(`⚠️ Producto ${item.sku} no tiene proveedor asignado`)
+        if (supplierError) {
+          console.error(`Error consultando supplier_stock para ${item.sku}:`, supplierError)
+          hasStockIssues = true
           continue
         }
 
-        const supplierId = product.supplier_id
-        const supplierName = product.suppliers?.name || 'Proveedor desconocido'
-
-        // Agrupar por proveedor
-        if (!supplierOrders.has(supplierId)) {
-          supplierOrders.set(supplierId, {
-            supplier_id: supplierId,
-            supplier_name: supplierName,
-            items: []
-          })
+        if (!supplierStockData || supplierStockData.length === 0) {
+          console.log(`⚠️ SKU ${item.sku} no encontrado en ningún lugar`)
+          hasStockIssues = true
+          continue
         }
 
-        supplierOrders.get(supplierId).items.push({
-          product_id: product.id,
-          sku: item.sku,
-          quantity_needed: requiredQuantity,
-          current_stock: availableStock,
-          quantity_to_order: requiredQuantity - availableStock // Solo pedir lo que falta
-        })
+        // Encontrado en supplier_stock - Calcular stock total disponible
+        const totalSupplierStock = supplierStockData.reduce((sum, stock) => sum + (stock.quantity || 0), 0)
+        const requiredQuantity = item.quantity
 
-        orderItemUpdates.push({
-          itemId: item.id,
-          assigned_supplier_id: supplierId // Asignar al proveedor
-        })
+        console.log(`SKU ${item.sku} encontrado en proveedor: ${totalSupplierStock} disponibles, ${requiredQuantity} requeridos`)
+
+        if (totalSupplierStock >= requiredQuantity) {
+          // HAY STOCK EN PROVEEDOR
+          const firstSupplierStock = supplierStockData[0]
+          const warehouseId = firstSupplierStock.warehouse_id
+
+          // Buscar supplier_id del warehouse (consulta separada)
+          const { data: warehouseData, error: warehouseError } = await supabase
+            .from('warehouses')
+            .select('supplier_id, suppliers(name)')
+            .eq('id', warehouseId)
+            .single()
+
+          if (warehouseError) {
+            console.error(`Error consultando warehouse ${warehouseId}:`, warehouseError)
+            hasStockIssues = true
+            continue
+          }
+
+          const supplierId = warehouseData?.supplier_id
+          const supplierName = warehouseData?.suppliers?.name || 'Proveedor desconocido'
+
+          console.log(`✓ Stock disponible en proveedor: ${supplierName} (ID: ${supplierId})`)
+
+          // Agrupar por proveedor
+          if (!supplierOrders.has(supplierId)) {
+            supplierOrders.set(supplierId, {
+              supplier_id: supplierId,
+              supplier_name: supplierName,
+              items: []
+            })
+          }
+
+          supplierOrders.get(supplierId).items.push({
+            product_id: null, // No tenemos product_id porque no está en products
+            sku: item.sku,
+            quantity_needed: requiredQuantity,
+            current_stock: 0, // No hay en nuestro stock
+            quantity_to_order: requiredQuantity // Pedir todo
+          })
+
+          orderItemUpdates.push({
+            itemId: item.id,
+            assigned_supplier_id: supplierId // Asignar al proveedor
+          })
+
+          hasStockIssues = true // Marca como issue porque requiere proveedor
+
+        } else {
+          console.log(`⚠️ Stock insuficiente en proveedor para ${item.sku}`)
+          hasStockIssues = true
+          continue
+        }
       }
     }
 
@@ -166,10 +246,8 @@ serve(async (req) => {
             product_id: item.product_id,
             sku: item.sku,
             quantity_to_order: item.quantity_to_order,
-            current_stock: item.current_stock,
-            status: 'Pendiente',
-            created_by_order_id: order_id, // Rastrear qué venta generó este pedido
-            notes: `Pedido automático generado por venta ${order.meli_order_id}`
+            status: 'Pendiente'
+            // REMOVED: current_stock, notes - campos que no existen
           })
 
         if (supplierOrderError) throw supplierOrderError
