@@ -58,6 +58,9 @@ const SalesView = () => {
         return supplier ? supplier.name : 'Proveedor Desconocido';
     };
 
+    // NOTA IMPORTANTE: Necesitamos asegurarnos que la consulta en App.js 
+    // incluya los campos assigned_supplier_id y source_type de order_items
+
     // Función para obtener el chip de origen
     const getSourceChip = (sourceType) => {
         switch(sourceType) {
@@ -319,8 +322,8 @@ const SalesView = () => {
                 
                 console.log('DEBUG - Total imágenes encontradas:', images.length);
                 
-                // USAR EL SOURCE_TYPE YA CALCULADO POR SMART-PROCESS-ORDER
-                const itemSourceType = item.source_type || (item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio');
+                // CALCULAR SOURCE_TYPE basado en assigned_supplier_id (porque order_items.source_type no existe)
+                const itemSourceType = item.assigned_supplier_id ? 'proveedor_directo' : 'stock_propio';
                 
                 console.log(`DEBUG - Item ${item.sku} - Origen: ${itemSourceType} (assigned_supplier_id: ${item.assigned_supplier_id})`);
                 

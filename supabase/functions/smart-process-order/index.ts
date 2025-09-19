@@ -1,5 +1,5 @@
 // Ruta: supabase/functions/smart-process-order/index.ts
-// Función mejorada para procesar órdenes con lógica de stock vs proveedor
+// Función corregida para usar solo campos que existen en la BD
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -86,8 +86,7 @@ serve(async (req) => {
 
         orderItemUpdates.push({
           itemId: item.id,
-          assigned_supplier_id: null, // Sale de nuestro stock
-          source_type: 'stock_propio'
+          assigned_supplier_id: null // Sale de nuestro stock
         })
 
       } else {
@@ -122,8 +121,7 @@ serve(async (req) => {
 
         orderItemUpdates.push({
           itemId: item.id,
-          assigned_supplier_id: supplierId,
-          source_type: 'proveedor_directo'
+          assigned_supplier_id: supplierId // Asignar al proveedor
         })
       }
     }
@@ -144,7 +142,7 @@ serve(async (req) => {
       if (stockError) throw stockError
     }
 
-    // Actualizar order_items con proveedor asignado
+    // Actualizar order_items con proveedor asignado (SOLO assigned_supplier_id)
     for (const update of orderItemUpdates) {
       const { error: itemError } = await supabase
         .from('order_items')
@@ -178,7 +176,7 @@ serve(async (req) => {
       }
     }
 
-    // 5. Actualizar estado de la orden principal
+    // 5. Actualizar estado de la orden principal (SIN processed_at que no existe)
     const newOrderStatus = hasStockIssues ? 'Pendiente' : 'En Preparación'
     const sourceType = hasStockIssues ? 'mixto' : 'stock_propio'
 
@@ -186,8 +184,8 @@ serve(async (req) => {
       .from('sales_orders')
       .update({
         status: newOrderStatus,
-        source_type: sourceType,
-        processed_at: new Date().toISOString()
+        source_type: sourceType
+        // REMOVED: processed_at porque no existe en la tabla
       })
       .eq('id', order_id)
 
