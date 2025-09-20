@@ -1,4 +1,4 @@
-// supabase/functions/mercadolibre-sync-orders/index.ts (ACTUALIZADO)
+// supabase/functions/mercadolibre-sync-orders/index.ts (CON AUTO-PROCESAMIENTO)
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
@@ -22,6 +22,34 @@ async function getMeliToken(supabaseClient, userId) {
     return tokenData.access_token;
 }
 
+// NUEVA FUNCIÓN: Auto-procesar orden
+async function autoProcessOrder(orderId: number, supabaseClient: any) {
+    try {
+        console.log(`🤖 Auto-procesando orden ${orderId}...`);
+        
+        const { data, error } = await supabaseClient.functions.invoke('smart-process-order', {
+            body: { order_id: orderId }
+        });
+        
+        if (error) {
+            console.error(`❌ Error auto-procesando orden ${orderId}:`, error);
+            return false;
+        }
+        
+        if (data?.success) {
+            console.log(`✅ Orden ${orderId} auto-procesada: ${data.message}`);
+            return true;
+        }
+        
+        console.warn(`⚠️ Orden ${orderId} procesada con advertencias:`, data);
+        return false;
+        
+    } catch (error) {
+        console.error(`❌ Error crítico auto-procesando orden ${orderId}:`, error);
+        return false;
+    }
+}
+
 serve(async (req) => {
     if (req.method === "OPTIONS") { return new Response("ok", { headers: corsHeaders }); }
     try {
@@ -43,6 +71,8 @@ serve(async (req) => {
             return new Response(JSON.stringify({ message: "No hay ventas nuevas para sincronizar." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
         let processedCount = 0;
+        let autoProcessedCount = 0;
+        
         for (const summaryOrder of summarizedOrders) {
             const detailUrl = `https://api.mercadolibre.com/orders/${summaryOrder.id}`;
             const detailResp = await fetch(detailUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -71,7 +101,20 @@ serve(async (req) => {
                 taxes_amount: taxesAmount,
                 net_received_amount: netReceivedAmount,
             };
-            const { data: savedOrder, error: orderError } = await supabase.from('sales_orders').upsert(saleOrderData, { onConflict: 'meli_order_id' }).select().single();
+            
+            // VERIFICAR SI ES VENTA NUEVA O EXISTENTE
+            const { data: existingOrder } = await supabase
+                .from('sales_orders')
+                .select('id, source_type')
+                .eq('meli_order_id', order.id)
+                .single();
+            
+            const { data: savedOrder, error: orderError } = await supabase
+                .from('sales_orders')
+                .upsert(saleOrderData, { onConflict: 'meli_order_id' })
+                .select()
+                .single();
+                
             if (orderError) throw orderError;
             
             const orderItems = order.order_items.map(item => ({
@@ -85,9 +128,32 @@ serve(async (req) => {
             }));
             const { error: itemsError } = await supabase.from('order_items').upsert(orderItems, { onConflict: 'order_id, sku' });
             if (itemsError) throw itemsError;
+            
             processedCount++;
+            
+            // 🤖 AUTO-PROCESAMIENTO: Solo para ventas nuevas sin source_type
+            if (!existingOrder || !existingOrder.source_type) {
+                console.log(`🆕 Venta nueva detectada: ${order.id}, iniciando auto-procesamiento...`);
+                
+                const autoProcessed = await autoProcessOrder(savedOrder.id, supabase);
+                if (autoProcessed) {
+                    autoProcessedCount++;
+                }
+            } else {
+                console.log(`♻️ Venta existente: ${order.id} (source_type: ${existingOrder.source_type})`);
+            }
         }
-        return new Response(JSON.stringify({ message: `Sincronización completada. Se procesaron ${processedCount} ventas.` }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        
+        const message = autoProcessedCount > 0 
+            ? `Sincronización completada. Se procesaron ${processedCount} ventas. ${autoProcessedCount} fueron auto-clasificadas.`
+            : `Sincronización completada. Se procesaron ${processedCount} ventas.`;
+            
+        return new Response(JSON.stringify({ 
+            message,
+            total_processed: processedCount,
+            auto_processed: autoProcessedCount
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        
     } catch (error) {
         console.error("Error en la función 'mercadolibre-sync-orders':", error);
         return new Response(JSON.stringify({ error: `Error interno en la función: ${error.message}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
