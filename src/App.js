@@ -197,8 +197,7 @@ const AppProvider = ({ children }) => {
             
             loadData();
         }
-    }, [session?.user?.id, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchCombos, checkMeliConnection]);
-    
+}, [session?.user?.id]);    
     const value = { 
         session, loading, showMessage, isMeliConnected, setIsMeliConnected,
         products, suppliers, categories, combos, salesOrders, supplierOrders, purchaseOrders, // ← NUEVO: combos en context
