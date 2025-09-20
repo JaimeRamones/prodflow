@@ -26,44 +26,6 @@ const CreateComboModal = ({ show, onClose }) => {
     const [searchingProducts, setSearchingProducts] = useState(false);
     const [searchResults, setSearchResults] = useState([]);
     
-    // 🔧 NUEVO: Estado para cargar warehouses con sus markups
-    const [warehouseMarkups, setWarehouseMarkups] = useState({});
-
-    // 🔧 NUEVO: Cargar markups por warehouse al inicio
-    useEffect(() => {
-        const loadWarehouseMarkups = async () => {
-            try {
-                const { data: warehousesData, error } = await supabase
-                    .from('warehouses')
-                    .select(`
-                        id,
-                        name,
-                        supplier_id,
-                        suppliers!inner(markup)
-                    `);
-                
-                if (error) throw error;
-                
-                // Crear mapa de warehouse_id -> markup
-                const markupMap = {};
-                warehousesData.forEach(warehouse => {
-                    markupMap[warehouse.id] = warehouse.suppliers.markup;
-                });
-                
-                setWarehouseMarkups(markupMap);
-                console.log('🏢 Markups por warehouse cargados:', markupMap);
-            } catch (error) {
-                console.error('Error cargando markups de warehouses:', error);
-                // Fallback: usar 30% por defecto
-                setWarehouseMarkups({});
-            }
-        };
-
-        if (show) {
-            loadWarehouseMarkups();
-        }
-    }, [show]);
-
     // Debug autenticación
     useEffect(() => {
         if (show) {
@@ -146,18 +108,11 @@ const CreateComboModal = ({ show, onClose }) => {
                     }))
                     .slice(0, 15);
 
-                // 🔧 ARREGLADO: Buscar en supplier_stock_items con JOIN para obtener markup real
+                // Buscar en supplier_stock_items con query específica
                 console.log('Buscando en supplier_stock_items:', searchTerm);
                 const { data: supplierData, error } = await supabase
                     .from('supplier_stock_items')
-                    .select(`
-                        *,
-                        warehouses!inner(
-                            id,
-                            name,
-                            suppliers!inner(markup)
-                        )
-                    `)
+                    .select('*')
                     .ilike('sku', `%${searchTerm}%`)
                     .limit(20)
                     .order('sku');
@@ -168,32 +123,22 @@ const CreateComboModal = ({ show, onClose }) => {
                     console.log('Resultados de proveedores:', supplierData?.length || 0);
                 }
 
-                // 🔧 ARREGLADO: Usar markup real del warehouse en lugar del 30% hardcodeado
                 const supplierResults = (supplierData || [])
                     .filter(item => !selectedComponents.some(comp => comp.sku === item.sku))
-                    .map(item => {
-                        // Obtener markup del warehouse/supplier
-                        const realMarkup = item.warehouses?.suppliers?.markup || warehouseMarkups[item.warehouse_id] || 30;
-                        const markupMultiplier = 1 + (realMarkup / 100);
-                        
-                        console.log(`💰 SKU ${item.sku}: Warehouse ${item.warehouse_id}, Markup ${realMarkup}%, Costo ${item.cost_price}, Venta ${(item.cost_price * markupMultiplier).toFixed(2)}`);
-                        
-                        return {
-                            sku: item.sku,
-                            name: `${item.sku}`,
-                            brand: 'Proveedor',
-                            cost_price: item.cost_price,
-                            sale_price: item.cost_price * markupMultiplier, // 🔧 ARREGLADO: Markup real
-                            stock_disponible: item.quantity,
-                            supplier_id: null,
-                            supplier_name: `${item.warehouses?.name || 'Warehouse'} ${item.warehouse_id} (${realMarkup}%)`,
-                            source: 'supplier',
-                            warehouse_id: item.warehouse_id,
-                            real_markup: realMarkup // Para debug
-                        };
-                    });
+                    .map(item => ({
+                        sku: item.sku,
+                        name: `${item.sku}`,
+                        brand: 'Proveedor',
+                        cost_price: item.cost_price,
+                        sale_price: item.cost_price * 1.75,
+                        stock_disponible: item.quantity,
+                        supplier_id: null,
+                        supplier_name: `Warehouse ${item.warehouse_id}`,
+                        source: 'supplier',
+                        warehouse_id: item.warehouse_id
+                    }));
 
-                // 🔧 MEJORADO: Priorizar inventario local y mostrar mejor información
+                // Combinar y ordenar resultados
                 const allResults = [...inventoryResults, ...supplierResults]
                     .sort((a, b) => {
                         const aSkuMatch = (a.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -202,7 +147,6 @@ const CreateComboModal = ({ show, onClose }) => {
                         if (aSkuMatch && !bSkuMatch) return -1;
                         if (!aSkuMatch && bSkuMatch) return 1;
                         
-                        // Priorizar inventario local sobre proveedores para mismo SKU
                         if (a.source === 'inventory' && b.source === 'supplier') return -1;
                         if (a.source === 'supplier' && b.source === 'inventory') return 1;
                         
@@ -223,7 +167,7 @@ const CreateComboModal = ({ show, onClose }) => {
         const timeoutId = setTimeout(searchProducts, 300);
         return () => clearTimeout(timeoutId);
         
-    }, [searchTerm, products, suppliers, selectedComponents, warehouseMarkups]);
+    }, [searchTerm, products, suppliers, selectedComponents]);
 
     // Manejar cambios en el formulario
     const handleInputChange = (field, value) => {
