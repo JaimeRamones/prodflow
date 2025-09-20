@@ -26,6 +26,21 @@ const CreateComboModal = ({ show, onClose }) => {
     const [searchingProducts, setSearchingProducts] = useState(false);
     const [searchResults, setSearchResults] = useState([]);
     
+    // Debug autenticación
+    useEffect(() => {
+        if (show) {
+            const checkAuth = async () => {
+                const { data: { user }, error } = await supabase.auth.getUser();
+                console.log('🔍 Debug Auth:');
+                console.log('Usuario actual:', user);
+                console.log('User ID:', user?.id);
+                console.log('Error de auth:', error);
+                console.log('Email:', user?.email);
+            };
+            checkAuth();
+        }
+    }, [show]);
+
     // Reset form when modal opens/closes
     useEffect(() => {
         if (!show) {
