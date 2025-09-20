@@ -1,4 +1,4 @@
-// Ruta: src/App.js
+// Ruta: src/App.js - ACTUALIZACIÓN PARA INCLUIR GARAJE
 
 import React, { useState, useEffect, useContext, createContext, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
@@ -11,7 +11,7 @@ import ProductEntry from './components/ProductEntry';
 import SalesView from './components/SalesView';
 import OrdersManagement from './components/OrdersManagement';
 import WarehouseView from './components/WarehouseView';
-import Kits from './components/Kits';
+import Garaje from './components/Garaje'; // ← NUEVO: Reemplaza Kits
 import MovementHistory from './components/MovementHistory';
 import Tools from './components/Tools';
 import Integrations from './components/Integrations';
@@ -46,7 +46,7 @@ const AppProvider = ({ children }) => {
     const [products, setProducts] = useState([]);
     const [suppliers, setSuppliers] = useState([]);
     const [categories, setCategories] = useState([]);
-    const [kits, setKits] = useState([]);
+    const [combos, setCombos] = useState([]); // ← NUEVO: Estado para combos
     const [salesOrders, setSalesOrders] = useState([]);
     const [supplierOrders, setSupplierOrders] = useState([]);
     const [purchaseOrders, setPurchaseOrders] = useState([]);
@@ -164,12 +164,17 @@ const AppProvider = ({ children }) => {
         else { setPurchaseOrders(data || []); }
     }, [session?.user?.id]);
 
-    const fetchKits = useCallback(async () => {
+    // ← NUEVO: Función para refrescar combos
+    const fetchCombos = useCallback(async () => {
         if (!session?.user?.id) return;
-        const { data, error } = await supabase.from('kits').select(`*, components:kit_components(*)`).order('name', { ascending: true });
-        if (error) showMessage('Error al cargar los kits.', 'error'); 
-        else setKits(data || []);
-    }, [session?.user?.id]);
+        const { data, error } = await supabase
+            .from('garaje_combos_complete')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .order('updated_at', { ascending: false });
+        if (error) showMessage('Error al cargar los combos.', 'error'); 
+        else setCombos(data || []);
+    }, [session?.user?.id, showMessage]);
 
     // ARREGLADO: Carga inicial de datos más robusta
     useEffect(() => {
@@ -183,6 +188,7 @@ const AppProvider = ({ children }) => {
                     fetchSalesOrders(),
                     fetchSupplierOrders(),
                     fetchPurchaseOrders(),
+                    fetchCombos(), // ← NUEVO: Cargar combos
                 ]);
                 
                 // Verificar ML después de cargar datos
@@ -191,13 +197,13 @@ const AppProvider = ({ children }) => {
             
             loadData();
         }
-    }, [session?.user?.id]);
+    }, [session?.user?.id, fetchProducts, fetchSuppliers, fetchCategories, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, fetchCombos, checkMeliConnection]);
     
     const value = { 
         session, loading, showMessage, isMeliConnected, setIsMeliConnected,
-        products, suppliers, categories, kits, salesOrders, supplierOrders, purchaseOrders,
+        products, suppliers, categories, combos, salesOrders, supplierOrders, purchaseOrders, // ← NUEVO: combos en context
         notification, setNotification, 
-        fetchProducts, fetchSuppliers, fetchCategories, fetchKits, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders,
+        fetchProducts, fetchSuppliers, fetchCategories, fetchCombos, fetchSalesOrders, fetchSupplierOrders, fetchPurchaseOrders, // ← NUEVO: fetchCombos
         checkMeliConnection
     };
     
@@ -215,6 +221,7 @@ const MobileNav = ({ isOpen, onClose, currentPath, onLogout }) => {
         { path: '/inflow', icon: "M13 10V3L4 14h7v7l9-11h-7z", label: "InFlow" },
         { path: '/sales', icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z", label: "Ventas" },
         { path: '/orders', icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01", label: "Pedidos" },
+        { path: '/garaje', icon: "M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z", label: "Garaje" }, // ← NUEVO: Icono de garaje
         { path: '/integrations', icon: "M13 10V3L4 14h7v7l9-11h-7z", label: "Integraciones" },
     ];
 
@@ -410,7 +417,10 @@ const AppContent = () => {
                         <NavButton to="/sales" iconPath="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">Ventas</NavButton>
                         <NavButton to="/orders" iconPath="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">Pedidos</NavButton>
                         <NavButton to="/warehouse" iconPath="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h6m-6 4h6m-6 4h6">Depósito</NavButton>
-                        <NavButton to="/kits" iconPath="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2zM6 18h2a2 2 0 002-2v-2a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2z">Kits</NavButton>
+                        
+                        {/* ← NUEVO: Garaje reemplaza a Kits */}
+                        <NavButton to="/garaje" iconPath="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z">Garaje</NavButton>
+                        
                         <NavButton to="/history" iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">Historial</NavButton>
                     </ul>
                     <ul className="pt-4 mt-4 space-y-2 border-t border-gray-700">
@@ -436,7 +446,10 @@ const AppContent = () => {
                         <Route path="/sales" element={<SalesView />} />
                         <Route path="/orders" element={<OrdersManagement />} />
                         <Route path="/warehouse" element={<WarehouseView />} />
-                        <Route path="/kits" element={<Kits />} />
+                        
+                        {/* ← NUEVO: Ruta para Garaje */}
+                        <Route path="/garaje" element={<Garaje />} />
+                        
                         <Route path="/history" element={<MovementHistory />} />
                         <Route path="/tools" element={<Tools />} />
                         <Route path="/integrations" element={<Integrations />} />

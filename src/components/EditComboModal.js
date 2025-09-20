@@ -148,15 +148,16 @@ const EditComboModal = ({ show, onClose, combo }) => {
             subrubro: p.subrubro
         }));
 
+        // Adaptar supplier_stock_items a tu estructura real
         const supplierProducts = supplierStockItems.map(item => ({
             sku: item.sku,
-            name: item.name || item.product_name,
-            brand: item.brand,
+            name: `Producto ${item.sku}`, // Nombre genérico ya que no tienes name
+            brand: 'Sin marca', // Brand genérico ya que no tienes brand
             cost_price: item.cost_price,
-            sale_price: item.sale_price || (item.cost_price * 1.3),
-            stock_disponible: item.available_quantity,
-            supplier_id: item.supplier_id,
-            supplier_name: suppliers.find(s => s.id === item.supplier_id)?.name || 'Proveedor',
+            sale_price: item.cost_price * 1.3, // Markup default del 30%
+            stock_disponible: item.quantity, // quantity en lugar de available_quantity
+            supplier_id: null, // No tienes supplier_id en esta tabla
+            supplier_name: 'Proveedor externo',
             source: 'supplier'
         }));
 
