@@ -49,16 +49,19 @@ const CreateComboModal = ({ show, onClose }) => {
     useEffect(() => {
         const fetchSupplierStock = async () => {
             try {
+                console.log('Cargando supplier_stock_items...');
                 const { data, error } = await supabase
                     .from('supplier_stock_items')
                     .select('*')
                     .order('sku');
                 
                 if (error) throw error;
+                console.log('Supplier stock cargado:', data?.length || 0, 'items');
                 setSupplierStockItems(data || []);
             } catch (error) {
                 console.error('Error cargando stock de proveedores:', error);
                 // No hacer nada si hay error, usar solo products
+                setSupplierStockItems([]);
             }
         };
 
@@ -97,7 +100,15 @@ const CreateComboModal = ({ show, onClose }) => {
             warehouse_id: item.warehouse_id
         }));
 
-        return [...inventoryProducts, ...supplierProducts];
+        const combined = [...inventoryProducts, ...supplierProducts];
+        console.log('DEBUG - Productos combinados:', {
+            inventory: inventoryProducts.length,
+            supplier: supplierProducts.length,
+            total: combined.length,
+            sampleSupplier: supplierProducts.slice(0, 3).map(p => p.sku)
+        });
+
+        return combined;
     }, [products, supplierStockItems, suppliers]);
 
     // Filtrar productos disponibles para búsqueda - BÚSQUEDA MEJORADA
