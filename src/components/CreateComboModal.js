@@ -23,8 +23,8 @@ const CreateComboModal = ({ show, onClose }) => {
     const [selectedComponents, setSelectedComponents] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [showProductSearch, setShowProductSearch] = useState(false);
-    const [searchingProducts, setSearchingProducts] = useState(false); // Para mostrar loading
-    const [searchResults, setSearchResults] = useState([]); // Resultados de búsqueda específica
+    const [searchingProducts, setSearchingProducts] = useState(false);
+    const [searchResults, setSearchResults] = useState([]);
     
     // Reset form when modal opens/closes
     useEffect(() => {
@@ -91,7 +91,7 @@ const CreateComboModal = ({ show, onClose }) => {
                         rubro: p.rubro,
                         subrubro: p.subrubro
                     }))
-                    .slice(0, 15); // Límite de resultados del inventario
+                    .slice(0, 15);
 
                 // Buscar en supplier_stock_items con query específica
                 console.log('Buscando en supplier_stock_items:', searchTerm);
@@ -126,20 +126,18 @@ const CreateComboModal = ({ show, onClose }) => {
                 // Combinar y ordenar resultados
                 const allResults = [...inventoryResults, ...supplierResults]
                     .sort((a, b) => {
-                        // Priorizar coincidencias exactas en SKU
                         const aSkuMatch = (a.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
                         const bSkuMatch = (b.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
                         
                         if (aSkuMatch && !bSkuMatch) return -1;
                         if (!aSkuMatch && bSkuMatch) return 1;
                         
-                        // Luego por fuente (inventario primero)
                         if (a.source === 'inventory' && b.source === 'supplier') return -1;
                         if (a.source === 'supplier' && b.source === 'inventory') return 1;
                         
                         return 0;
                     })
-                    .slice(0, 25); // Límite total de resultados
+                    .slice(0, 25);
 
                 setSearchResults(allResults);
                 
@@ -151,97 +149,10 @@ const CreateComboModal = ({ show, onClose }) => {
             }
         };
 
-        // Debounce de 300ms
         const timeoutId = setTimeout(searchProducts, 300);
         return () => clearTimeout(timeoutId);
         
     }, [searchTerm, products, suppliers, selectedComponents]);
-
-    // Combinar productos del inventario y proveedores para búsqueda
-    const allAvailableProducts = useMemo(() => {
-        const inventoryProducts = products.map(p => ({
-            sku: p.sku,
-            name: p.name,
-            brand: p.brand,
-            cost_price: p.cost_price,
-            sale_price: p.sale_price,
-            stock_disponible: p.stock_disponible,
-            supplier_id: p.supplier_id,
-            supplier_name: suppliers.find(s => s.id === p.supplier_id)?.name || 'Sin proveedor',
-            source: 'inventory',
-            rubro: p.rubro,
-            subrubro: p.subrubro
-        }));
-
-        // Adaptar supplier_stock_items a tu estructura real
-        const supplierProducts = supplierStockItems.map(item => ({
-            sku: item.sku,
-            name: `${item.sku}`, // Mostrar el SKU como nombre ya que no tienes name
-            brand: 'Proveedor', // Brand genérico
-            cost_price: item.cost_price,
-            sale_price: item.cost_price * 1.3, // Markup default del 30%
-            stock_disponible: item.quantity, // quantity en lugar de available_quantity
-            supplier_id: null, // No tienes supplier_id en esta tabla
-            supplier_name: `Warehouse ${item.warehouse_id}`, // Usar warehouse_id como referencia
-            source: 'supplier',
-            warehouse_id: item.warehouse_id
-        }));
-
-        const combined = [...inventoryProducts, ...supplierProducts];
-        console.log('DEBUG - Productos combinados:', {
-            inventory: inventoryProducts.length,
-            supplier: supplierProducts.length,
-            total: combined.length,
-            sampleSupplier: supplierProducts.slice(0, 3).map(p => p.sku)
-        });
-
-        return combined;
-    }, [products, supplierStockItems, suppliers]);
-
-    // Filtrar productos disponibles para búsqueda - BÚSQUEDA MEJORADA
-    const filteredProducts = useMemo(() => {
-        if (!searchTerm || searchTerm.length < 2) return [];
-        
-        const searchTermLower = searchTerm.toLowerCase();
-        
-        return allAvailableProducts
-            .filter(product => {
-                // No incluir ya seleccionados
-                if (selectedComponents.some(comp => comp.sku === product.sku)) return false;
-                
-                // BÚSQUEDA MEJORADA - buscar en múltiples campos y fragmentos
-                const searchFields = [
-                    product.sku || '',
-                    product.name || '',
-                    product.brand || '',
-                    product.rubro || '',
-                    product.subrubro || ''
-                ];
-                
-                // Buscar el término en cualquier parte de cualquier campo
-                return searchFields.some(field => 
-                    field.toLowerCase().includes(searchTermLower)
-                );
-            })
-            .sort((a, b) => {
-                // Priorizar coincidencias exactas en SKU
-                const aSkuMatch = (a.sku || '').toLowerCase().includes(searchTermLower);
-                const bSkuMatch = (b.sku || '').toLowerCase().includes(searchTermLower);
-                
-                if (aSkuMatch && !bSkuMatch) return -1;
-                if (!aSkuMatch && bSkuMatch) return 1;
-                
-                // Luego por nombre
-                const aNameMatch = (a.name || '').toLowerCase().includes(searchTermLower);
-                const bNameMatch = (b.name || '').toLowerCase().includes(searchTermLower);
-                
-                if (aNameMatch && !bNameMatch) return -1;
-                if (!aNameMatch && bNameMatch) return 1;
-                
-                return 0;
-            })
-            .slice(0, 30); // Aumentar límite a 30 resultados
-    }, [allAvailableProducts, selectedComponents, searchTerm]);
 
     // Manejar cambios en el formulario
     const handleInputChange = (field, value) => {
@@ -310,7 +221,6 @@ const CreateComboModal = ({ show, onClose }) => {
             generatedSku += '+...';
         }
         
-        // Truncar si es muy largo
         if (generatedSku.length > 50) {
             generatedSku = generatedSku.substring(0, 47) + '...';
         }
@@ -405,7 +315,6 @@ const CreateComboModal = ({ show, onClose }) => {
                 return;
             }
 
-            // Obtener brands de los componentes
             const brands = [...new Set(selectedComponents.map(comp => comp.brand).filter(Boolean))];
             
             // Crear el combo - ARREGLAR CAMPOS NUMÉRICOS
@@ -415,7 +324,6 @@ const CreateComboModal = ({ show, onClose }) => {
                 brands,
                 description: formData.description || generateDescription(),
                 meli_description: generateDescription(),
-                // Arreglar campos numéricos vacíos
                 markup_percentage: formData.markup_percentage || 0,
                 fixed_price: formData.fixed_price ? parseFloat(formData.fixed_price) : null
             };
@@ -666,17 +574,20 @@ const CreateComboModal = ({ show, onClose }) => {
                                         <input
                                             type="text"
                                             value={searchTerm}
-                                            onChange={(e) => {
-                                                setSearchTerm(e.target.value);
-                                                setShowProductSearch(e.target.value.length > 2);
-                                            }}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
                                             className="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white"
                                             placeholder="Buscar productos por SKU, nombre o marca..."
                                         />
                                         
-                                        {showProductSearch && filteredProducts.length > 0 && (
+                                        {searchingProducts && (
+                                            <div className="absolute right-3 top-3">
+                                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                                            </div>
+                                        )}
+                                        
+                                        {showProductSearch && searchResults.length > 0 && (
                                             <div className="absolute z-10 w-full mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg max-h-64 overflow-y-auto">
-                                                {filteredProducts.map((product, index) => (
+                                                {searchResults.map((product, index) => (
                                                     <button
                                                         key={index}
                                                         onClick={() => addComponent(product)}
@@ -696,6 +607,14 @@ const CreateComboModal = ({ show, onClose }) => {
                                                         </div>
                                                     </button>
                                                 ))}
+                                            </div>
+                                        )}
+                                        
+                                        {showProductSearch && searchResults.length === 0 && !searchingProducts && searchTerm.length >= 2 && (
+                                            <div className="absolute z-10 w-full mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg p-3">
+                                                <div className="text-gray-400 text-center">
+                                                    No se encontraron productos con "{searchTerm}"
+                                                </div>
                                             </div>
                                         )}
                                     </div>
