@@ -23,7 +23,8 @@ const CreateComboModal = ({ show, onClose }) => {
     const [selectedComponents, setSelectedComponents] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [showProductSearch, setShowProductSearch] = useState(false);
-    const [supplierStockItems, setSupplierStockItems] = useState([]);
+    const [searchingProducts, setSearchingProducts] = useState(false); // Para mostrar loading
+    const [searchResults, setSearchResults] = useState([]); // Resultados de búsqueda específica
     
     // Reset form when modal opens/closes
     useEffect(() => {
@@ -42,33 +43,119 @@ const CreateComboModal = ({ show, onClose }) => {
             setSelectedComponents([]);
             setSearchTerm('');
             setShowProductSearch(false);
+            setSearchResults([]);
         }
     }, [show]);
 
-    // Cargar productos de proveedores para la búsqueda
+    // Búsqueda inteligente en tiempo real
     useEffect(() => {
-        const fetchSupplierStock = async () => {
+        const searchProducts = async () => {
+            if (!searchTerm || searchTerm.length < 2) {
+                setSearchResults([]);
+                setShowProductSearch(false);
+                return;
+            }
+
+            setSearchingProducts(true);
+            setShowProductSearch(true);
+
             try {
-                console.log('Cargando supplier_stock_items...');
-                const { data, error } = await supabase
+                // Buscar en inventario local
+                const inventoryResults = products
+                    .filter(product => {
+                        if (selectedComponents.some(comp => comp.sku === product.sku)) return false;
+                        
+                        const searchTermLower = searchTerm.toLowerCase();
+                        const searchFields = [
+                            product.sku || '',
+                            product.name || '',
+                            product.brand || '',
+                            product.rubro || '',
+                            product.subrubro || ''
+                        ];
+                        
+                        return searchFields.some(field => 
+                            field.toLowerCase().includes(searchTermLower)
+                        );
+                    })
+                    .map(p => ({
+                        sku: p.sku,
+                        name: p.name,
+                        brand: p.brand,
+                        cost_price: p.cost_price,
+                        sale_price: p.sale_price,
+                        stock_disponible: p.stock_disponible,
+                        supplier_id: p.supplier_id,
+                        supplier_name: suppliers.find(s => s.id === p.supplier_id)?.name || 'Sin proveedor',
+                        source: 'inventory',
+                        rubro: p.rubro,
+                        subrubro: p.subrubro
+                    }))
+                    .slice(0, 15); // Límite de resultados del inventario
+
+                // Buscar en supplier_stock_items con query específica
+                console.log('Buscando en supplier_stock_items:', searchTerm);
+                const { data: supplierData, error } = await supabase
                     .from('supplier_stock_items')
                     .select('*')
+                    .ilike('sku', `%${searchTerm}%`)
+                    .limit(20)
                     .order('sku');
+
+                if (error) {
+                    console.error('Error buscando en proveedores:', error);
+                } else {
+                    console.log('Resultados de proveedores:', supplierData?.length || 0);
+                }
+
+                const supplierResults = (supplierData || [])
+                    .filter(item => !selectedComponents.some(comp => comp.sku === item.sku))
+                    .map(item => ({
+                        sku: item.sku,
+                        name: `${item.sku}`,
+                        brand: 'Proveedor',
+                        cost_price: item.cost_price,
+                        sale_price: item.cost_price * 1.3,
+                        stock_disponible: item.quantity,
+                        supplier_id: null,
+                        supplier_name: `Warehouse ${item.warehouse_id}`,
+                        source: 'supplier',
+                        warehouse_id: item.warehouse_id
+                    }));
+
+                // Combinar y ordenar resultados
+                const allResults = [...inventoryResults, ...supplierResults]
+                    .sort((a, b) => {
+                        // Priorizar coincidencias exactas en SKU
+                        const aSkuMatch = (a.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
+                        const bSkuMatch = (b.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
+                        
+                        if (aSkuMatch && !bSkuMatch) return -1;
+                        if (!aSkuMatch && bSkuMatch) return 1;
+                        
+                        // Luego por fuente (inventario primero)
+                        if (a.source === 'inventory' && b.source === 'supplier') return -1;
+                        if (a.source === 'supplier' && b.source === 'inventory') return 1;
+                        
+                        return 0;
+                    })
+                    .slice(0, 25); // Límite total de resultados
+
+                setSearchResults(allResults);
                 
-                if (error) throw error;
-                console.log('Supplier stock cargado:', data?.length || 0, 'items');
-                setSupplierStockItems(data || []);
             } catch (error) {
-                console.error('Error cargando stock de proveedores:', error);
-                // No hacer nada si hay error, usar solo products
-                setSupplierStockItems([]);
+                console.error('Error en búsqueda:', error);
+                setSearchResults([]);
+            } finally {
+                setSearchingProducts(false);
             }
         };
 
-        if (show) {
-            fetchSupplierStock();
-        }
-    }, [show]);
+        // Debounce de 300ms
+        const timeoutId = setTimeout(searchProducts, 300);
+        return () => clearTimeout(timeoutId);
+        
+    }, [searchTerm, products, suppliers, selectedComponents]);
 
     // Combinar productos del inventario y proveedores para búsqueda
     const allAvailableProducts = useMemo(() => {
