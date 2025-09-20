@@ -86,31 +86,63 @@ const CreateComboModal = ({ show, onClose }) => {
         // Adaptar supplier_stock_items a tu estructura real
         const supplierProducts = supplierStockItems.map(item => ({
             sku: item.sku,
-            name: `Producto ${item.sku}`, // Nombre genérico ya que no tienes name
-            brand: 'Sin marca', // Brand genérico ya que no tienes brand
+            name: `${item.sku}`, // Mostrar el SKU como nombre ya que no tienes name
+            brand: 'Proveedor', // Brand genérico
             cost_price: item.cost_price,
             sale_price: item.cost_price * 1.3, // Markup default del 30%
             stock_disponible: item.quantity, // quantity en lugar de available_quantity
             supplier_id: null, // No tienes supplier_id en esta tabla
-            supplier_name: 'Proveedor externo',
-            source: 'supplier'
+            supplier_name: `Warehouse ${item.warehouse_id}`, // Usar warehouse_id como referencia
+            source: 'supplier',
+            warehouse_id: item.warehouse_id
         }));
 
         return [...inventoryProducts, ...supplierProducts];
     }, [products, supplierStockItems, suppliers]);
 
-    // Filtrar productos disponibles para búsqueda
+    // Filtrar productos disponibles para búsqueda - BÚSQUEDA MEJORADA
     const filteredProducts = useMemo(() => {
-        if (!searchTerm) return [];
+        if (!searchTerm || searchTerm.length < 2) return [];
+        
+        const searchTermLower = searchTerm.toLowerCase();
         
         return allAvailableProducts
-            .filter(product => 
-                !selectedComponents.some(comp => comp.sku === product.sku) && // No incluir ya seleccionados
-                (product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                 product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                 (product.brand && product.brand.toLowerCase().includes(searchTerm.toLowerCase())))
-            )
-            .slice(0, 20); // Limitar resultados
+            .filter(product => {
+                // No incluir ya seleccionados
+                if (selectedComponents.some(comp => comp.sku === product.sku)) return false;
+                
+                // BÚSQUEDA MEJORADA - buscar en múltiples campos y fragmentos
+                const searchFields = [
+                    product.sku || '',
+                    product.name || '',
+                    product.brand || '',
+                    product.rubro || '',
+                    product.subrubro || ''
+                ];
+                
+                // Buscar el término en cualquier parte de cualquier campo
+                return searchFields.some(field => 
+                    field.toLowerCase().includes(searchTermLower)
+                );
+            })
+            .sort((a, b) => {
+                // Priorizar coincidencias exactas en SKU
+                const aSkuMatch = (a.sku || '').toLowerCase().includes(searchTermLower);
+                const bSkuMatch = (b.sku || '').toLowerCase().includes(searchTermLower);
+                
+                if (aSkuMatch && !bSkuMatch) return -1;
+                if (!aSkuMatch && bSkuMatch) return 1;
+                
+                // Luego por nombre
+                const aNameMatch = (a.name || '').toLowerCase().includes(searchTermLower);
+                const bNameMatch = (b.name || '').toLowerCase().includes(searchTermLower);
+                
+                if (aNameMatch && !bNameMatch) return -1;
+                if (!aNameMatch && bNameMatch) return 1;
+                
+                return 0;
+            })
+            .slice(0, 30); // Aumentar límite a 30 resultados
     }, [allAvailableProducts, selectedComponents, searchTerm]);
 
     // Manejar cambios en el formulario
@@ -278,13 +310,16 @@ const CreateComboModal = ({ show, onClose }) => {
             // Obtener brands de los componentes
             const brands = [...new Set(selectedComponents.map(comp => comp.brand).filter(Boolean))];
             
-            // Crear el combo
+            // Crear el combo - ARREGLAR CAMPOS NUMÉRICOS
             const comboData = {
                 ...formData,
                 combo_sku: formData.combo_sku.trim(),
                 brands,
                 description: formData.description || generateDescription(),
-                meli_description: generateDescription()
+                meli_description: generateDescription(),
+                // Arreglar campos numéricos vacíos
+                markup_percentage: formData.markup_percentage || 0,
+                fixed_price: formData.fixed_price ? parseFloat(formData.fixed_price) : null
             };
             
             const { data: savedCombo, error: comboError } = await supabase
@@ -295,16 +330,16 @@ const CreateComboModal = ({ show, onClose }) => {
             
             if (comboError) throw comboError;
             
-            // Agregar componentes
+            // Agregar componentes - ARREGLAR CAMPOS NUMÉRICOS
             const componentData = selectedComponents.map(comp => ({
                 combo_id: savedCombo.id,
                 product_sku: comp.sku,
-                quantity: comp.quantity,
-                product_name: comp.name,
-                cost_price: comp.cost_price,
-                sale_price: comp.sale_price,
-                supplier_id: comp.supplier_id,
-                supplier_name: comp.supplier_name
+                quantity: comp.quantity || 1,
+                product_name: comp.name || '',
+                cost_price: comp.cost_price || 0,
+                sale_price: comp.sale_price || 0,
+                supplier_id: comp.supplier_id || null,
+                supplier_name: comp.supplier_name || ''
             }));
             
             const { error: componentsError } = await supabase
