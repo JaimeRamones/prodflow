@@ -289,7 +289,7 @@ const EditComboModal = ({ show, onClose, combo }) => {
         return description;
     };
 
-    // Guardar cambios
+    // GUARDAR CAMBIOS - ARREGLADO PARA CAMPOS NUMÉRICOS
     const handleSave = async () => {
         if (!formData.combo_sku.trim() || !formData.combo_name.trim()) {
             showMessage('SKU y nombre del combo son obligatorios.', 'error');
@@ -306,14 +306,13 @@ const EditComboModal = ({ show, onClose, combo }) => {
         try {
             // Verificar que el SKU no exista en otro combo
             if (formData.combo_sku !== combo.combo_sku) {
-                const { data: existingCombo } = await supabase
+                const { data: existingCombos } = await supabase
                     .from('garaje_combos')
                     .select('id')
                     .eq('combo_sku', formData.combo_sku.trim())
-                    .neq('id', combo.id)
-                    .single();
+                    .neq('id', combo.id);
                 
-                if (existingCombo) {
+                if (existingCombos && existingCombos.length > 0) {
                     showMessage('Ya existe otro combo con ese SKU.', 'error');
                     return;
                 }
@@ -321,22 +320,34 @@ const EditComboModal = ({ show, onClose, combo }) => {
 
             const brands = [...new Set(selectedComponents.map(comp => comp.brand).filter(Boolean))];
             
-            // Actualizar el combo
+            // ARREGLAR CAMPOS NUMÉRICOS ANTES DEL UPDATE
             const comboData = {
-                ...formData,
                 combo_sku: formData.combo_sku.trim(),
-                brands,
+                combo_name: formData.combo_name.trim(),
                 description: formData.description || generateDescription(),
+                category: formData.category || null,
+                subcategory: formData.subcategory || null,
+                // ✅ VALIDAR CAMPOS NUMÉRICOS CORRECTAMENTE
+                markup_percentage: formData.markup_percentage ? Number(formData.markup_percentage) : 0,
+                fixed_price: formData.fixed_price && formData.fixed_price !== '' ? Number(formData.fixed_price) : null,
+                locations: formData.locations || [],
+                vehicle_applications: formData.vehicle_applications || [],
+                brands: brands,
                 meli_description: generateDescription(),
                 updated_at: new Date().toISOString()
             };
+            
+            console.log('💾 Datos del combo a actualizar:', comboData);
             
             const { error: comboError } = await supabase
                 .from('garaje_combos')
                 .update(comboData)
                 .eq('id', combo.id);
             
-            if (comboError) throw comboError;
+            if (comboError) {
+                console.error('Error actualizando combo:', comboError);
+                throw comboError;
+            }
             
             // Eliminar componentes existentes
             const { error: deleteError } = await supabase
@@ -346,16 +357,16 @@ const EditComboModal = ({ show, onClose, combo }) => {
             
             if (deleteError) throw deleteError;
             
-            // Agregar nuevos componentes
+            // Agregar nuevos componentes - VALIDAR CAMPOS NUMÉRICOS
             const componentData = selectedComponents.map((comp, index) => ({
                 combo_id: combo.id,
                 product_sku: comp.product_sku,
-                quantity: comp.quantity,
-                product_name: comp.name,
-                cost_price: comp.cost_price,
-                sale_price: comp.sale_price,
-                supplier_id: comp.supplier_id,
-                supplier_name: comp.supplier_name,
+                quantity: Number(comp.quantity) || 1,
+                product_name: comp.name || '',
+                cost_price: comp.cost_price ? Number(comp.cost_price) : null,
+                sale_price: comp.sale_price ? Number(comp.sale_price) : null,
+                supplier_id: comp.supplier_id || null,
+                supplier_name: comp.supplier_name || '',
                 position: index
             }));
             
@@ -363,12 +374,16 @@ const EditComboModal = ({ show, onClose, combo }) => {
                 .from('garaje_combo_items')
                 .insert(componentData);
             
-            if (componentsError) throw componentsError;
+            if (componentsError) {
+                console.error('Error insertando componentes:', componentsError);
+                throw componentsError;
+            }
             
             showMessage(`Combo "${formData.combo_name}" actualizado con éxito.`, 'success');
             onClose();
             
         } catch (error) {
+            console.error('❌ Error completo:', error);
             showMessage(`Error al actualizar combo: ${error.message}`, 'error');
         } finally {
             setIsSubmitting(false);
