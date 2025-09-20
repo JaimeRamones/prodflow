@@ -303,7 +303,7 @@ const CreateComboModal = ({ show, onClose }) => {
         return description;
     };
 
-    // Guardar combo - ARREGLADO CON USER_ID
+    // Guardar combo - ARREGLADO PARA TABLA REAL
     const handleSave = async () => {
         if (!formData.combo_sku.trim() || !formData.combo_name.trim()) {
             showMessage('SKU y nombre del combo son obligatorios.', 'error');
@@ -327,30 +327,38 @@ const CreateComboModal = ({ show, onClose }) => {
 
             console.log('💾 Creando combo con user_id:', user.id);
 
-            // Verificar que el SKU no exista
-            const { data: existingCombo } = await supabase
+            // NO TOCAR EL SKU - RESPETARLO EXACTAMENTE COMO ESTÁ
+            const originalSku = formData.combo_sku.trim();
+            console.log('📋 SKU original (sin modificar):', originalSku);
+
+            // Verificar que el SKU no exista - USAR ARRAY PARA EVITAR 406
+            const { data: existingCombos, error: checkError } = await supabase
                 .from('garaje_combos')
                 .select('id')
-                .eq('combo_sku', formData.combo_sku.trim())
-                .single();
+                .eq('combo_sku', originalSku);
             
-            if (existingCombo) {
+            if (checkError) {
+                console.error('Error verificando SKU:', checkError);
+                throw checkError;
+            }
+
+            if (existingCombos && existingCombos.length > 0) {
                 showMessage('Ya existe un combo con ese SKU.', 'error');
                 return;
             }
 
             const brands = [...new Set(selectedComponents.map(comp => comp.brand).filter(Boolean))];
             
-            // Crear el combo - AGREGANDO USER_ID
+            // Crear el combo
             const comboData = {
-                user_id: user.id, // ✅ FIELD AGREGADO
-                combo_sku: formData.combo_sku.trim(),
+                user_id: user.id,
+                combo_sku: originalSku, // SIN MODIFICAR
                 combo_name: formData.combo_name.trim(),
                 description: formData.description || generateDescription(),
                 category: formData.category || null,
                 subcategory: formData.subcategory || null,
-                markup_percentage: formData.markup_percentage || 0,
-                fixed_price: formData.fixed_price ? parseFloat(formData.fixed_price) : null,
+                markup_percentage: Number(formData.markup_percentage) || 0,
+                fixed_price: formData.fixed_price ? Number(formData.fixed_price) : null,
                 locations: formData.locations || [],
                 vehicle_applications: formData.vehicle_applications || [],
                 brands: brands,
@@ -374,26 +382,39 @@ const CreateComboModal = ({ show, onClose }) => {
             
             console.log('✅ Combo creado exitosamente:', savedCombo);
             
-            // Agregar componentes
-            const componentData = selectedComponents.map(comp => ({
-                combo_id: savedCombo.id,
-                product_sku: comp.sku,
-                quantity: comp.quantity || 1,
-                product_name: comp.name || '',
-                cost_price: comp.cost_price || 0,
-                sale_price: comp.sale_price || 0,
-                supplier_id: comp.supplier_id || null,
-                supplier_name: comp.supplier_name || ''
-            }));
+            // VALIDAR COMPONENTES ANTES DE INSERTAR - SEGÚN ESTRUCTURA REAL
+            const componentData = selectedComponents.map((comp, index) => {
+                // VALIDAR QUE PRODUCT_SKU NO SEA NULL (ES NOT NULL EN LA TABLA)
+                if (!comp.sku) {
+                    throw new Error(`Componente ${index + 1}: SKU no puede estar vacío`);
+                }
+
+                const componentRow = {
+                    combo_id: savedCombo.id, // bigint NOT NULL
+                    product_sku: comp.sku, // text NOT NULL - SIN NORMALIZAR
+                    product_name: comp.name || null, // text nullable
+                    quantity: Number(comp.quantity) || 1, // integer NOT NULL default 1
+                    cost_price: comp.cost_price ? Number(comp.cost_price) : null, // numeric nullable
+                    sale_price: comp.sale_price ? Number(comp.sale_price) : null, // numeric nullable
+                    supplier_id: comp.supplier_id || null, // bigint nullable
+                    supplier_name: comp.supplier_name || null, // text nullable
+                    position: index, // integer nullable default 0
+                    notes: null // text nullable
+                    // created_at se auto-genera
+                };
+                
+                console.log(`📦 Componente ${index + 1} (SKU: ${comp.sku}):`, componentRow);
+                return componentRow;
+            });
             
-            console.log('💾 Insertando componentes:', componentData);
+            console.log('💾 Insertando componentes validados:', componentData);
             
             const { error: componentsError } = await supabase
                 .from('garaje_combo_items')
                 .insert(componentData);
             
             if (componentsError) {
-                console.error('Error insertando componentes:', componentsError);
+                console.error('❌ Error insertando componentes:', componentsError);
                 throw componentsError;
             }
             
