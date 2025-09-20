@@ -303,7 +303,7 @@ const CreateComboModal = ({ show, onClose }) => {
         return description;
     };
 
-    // Guardar combo
+    // Guardar combo - ARREGLADO CON USER_ID
     const handleSave = async () => {
         if (!formData.combo_sku.trim() || !formData.combo_name.trim()) {
             showMessage('SKU y nombre del combo son obligatorios.', 'error');
@@ -318,6 +318,15 @@ const CreateComboModal = ({ show, onClose }) => {
         setIsSubmitting(true);
         
         try {
+            // OBTENER USER_ID DEL USUARIO AUTENTICADO
+            const { data: { user }, error: authError } = await supabase.auth.getUser();
+            
+            if (authError || !user) {
+                throw new Error('Usuario no autenticado. Por favor, inicia sesión nuevamente.');
+            }
+
+            console.log('💾 Creando combo con user_id:', user.id);
+
             // Verificar que el SKU no exista
             const { data: existingCombo } = await supabase
                 .from('garaje_combos')
@@ -332,16 +341,25 @@ const CreateComboModal = ({ show, onClose }) => {
 
             const brands = [...new Set(selectedComponents.map(comp => comp.brand).filter(Boolean))];
             
-            // Crear el combo - ARREGLAR CAMPOS NUMÉRICOS
+            // Crear el combo - AGREGANDO USER_ID
             const comboData = {
-                ...formData,
+                user_id: user.id, // ✅ FIELD AGREGADO
                 combo_sku: formData.combo_sku.trim(),
-                brands,
+                combo_name: formData.combo_name.trim(),
                 description: formData.description || generateDescription(),
-                meli_description: generateDescription(),
+                category: formData.category || null,
+                subcategory: formData.subcategory || null,
                 markup_percentage: formData.markup_percentage || 0,
-                fixed_price: formData.fixed_price ? parseFloat(formData.fixed_price) : null
+                fixed_price: formData.fixed_price ? parseFloat(formData.fixed_price) : null,
+                locations: formData.locations || [],
+                vehicle_applications: formData.vehicle_applications || [],
+                brands: brands,
+                meli_description: generateDescription(),
+                is_active: true,
+                is_published_to_meli: false
             };
+            
+            console.log('💾 Datos del combo a insertar:', comboData);
             
             const { data: savedCombo, error: comboError } = await supabase
                 .from('garaje_combos')
@@ -349,9 +367,14 @@ const CreateComboModal = ({ show, onClose }) => {
                 .select()
                 .single();
             
-            if (comboError) throw comboError;
+            if (comboError) {
+                console.error('Error insertando combo:', comboError);
+                throw comboError;
+            }
             
-            // Agregar componentes - ARREGLAR CAMPOS NUMÉRICOS
+            console.log('✅ Combo creado exitosamente:', savedCombo);
+            
+            // Agregar componentes
             const componentData = selectedComponents.map(comp => ({
                 combo_id: savedCombo.id,
                 product_sku: comp.sku,
@@ -363,16 +386,24 @@ const CreateComboModal = ({ show, onClose }) => {
                 supplier_name: comp.supplier_name || ''
             }));
             
+            console.log('💾 Insertando componentes:', componentData);
+            
             const { error: componentsError } = await supabase
                 .from('garaje_combo_items')
                 .insert(componentData);
             
-            if (componentsError) throw componentsError;
+            if (componentsError) {
+                console.error('Error insertando componentes:', componentsError);
+                throw componentsError;
+            }
+            
+            console.log('✅ Componentes insertados exitosamente');
             
             showMessage(`Combo "${formData.combo_name}" creado con éxito.`, 'success');
             onClose();
             
         } catch (error) {
+            console.error('❌ Error completo:', error);
             showMessage(`Error al crear combo: ${error.message}`, 'error');
         } finally {
             setIsSubmitting(false);
