@@ -130,7 +130,7 @@ const CreateComboModal = ({ show, onClose }) => {
                         name: `${item.sku}`,
                         brand: 'Proveedor',
                         cost_price: item.cost_price,
-                        sale_price: item.cost_price * 1.3,
+                        sale_price: item.cost_price * 1.75,
                         stock_disponible: item.quantity,
                         supplier_id: null,
                         supplier_name: `Warehouse ${item.warehouse_id}`,
