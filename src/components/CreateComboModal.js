@@ -26,6 +26,44 @@ const CreateComboModal = ({ show, onClose }) => {
     const [searchingProducts, setSearchingProducts] = useState(false);
     const [searchResults, setSearchResults] = useState([]);
     
+    // 🔧 NUEVO: Estado para markups de warehouses
+    const [warehouseMarkups, setWarehouseMarkups] = useState({});
+
+    // 🔧 NUEVO: Cargar markups por warehouse al abrir el modal
+    useEffect(() => {
+        const loadWarehouseMarkups = async () => {
+            if (!show) return;
+            
+            try {
+                const { data: warehousesData, error } = await supabase
+                    .from('warehouses')
+                    .select(`
+                        id,
+                        suppliers!inner(markup)
+                    `);
+                
+                if (error) throw error;
+                
+                // Crear mapa warehouse_id -> markup
+                const markupMap = {};
+                warehousesData.forEach(warehouse => {
+                    markupMap[warehouse.id] = warehouse.suppliers.markup;
+                });
+                
+                setWarehouseMarkups(markupMap);
+                console.log('🏢 Markups cargados:', markupMap);
+            } catch (error) {
+                console.error('Error cargando markups:', error);
+                // Fallback: usar markups por defecto si falla
+                setWarehouseMarkups({
+                    2: 73, 3: 75, 4: 90, 5: 75, 7: 90, 8: 75
+                });
+            }
+        };
+
+        loadWarehouseMarkups();
+    }, [show]);
+    
     // Debug autenticación
     useEffect(() => {
         if (show) {
@@ -62,7 +100,7 @@ const CreateComboModal = ({ show, onClose }) => {
         }
     }, [show]);
 
-    // Búsqueda inteligente en tiempo real
+    // Búsqueda inteligente en tiempo real (SIN CAMBIOS - MANTIENE TU LÓGICA)
     useEffect(() => {
         const searchProducts = async () => {
             if (!searchTerm || searchTerm.length < 2) {
@@ -123,22 +161,31 @@ const CreateComboModal = ({ show, onClose }) => {
                     console.log('Resultados de proveedores:', supplierData?.length || 0);
                 }
 
+                // 🔧 ÚNICO CAMBIO: Usar markup real en lugar de 1.75 hardcodeado
                 const supplierResults = (supplierData || [])
                     .filter(item => !selectedComponents.some(comp => comp.sku === item.sku))
-                    .map(item => ({
-                        sku: item.sku,
-                        name: `${item.sku}`,
-                        brand: 'Proveedor',
-                        cost_price: item.cost_price,
-                        sale_price: item.cost_price * 1.75,
-                        stock_disponible: item.quantity,
-                        supplier_id: null,
-                        supplier_name: `Warehouse ${item.warehouse_id}`,
-                        source: 'supplier',
-                        warehouse_id: item.warehouse_id
-                    }));
+                    .map(item => {
+                        // Obtener markup real del warehouse o usar 75% como fallback
+                        const warehouseMarkup = warehouseMarkups[item.warehouse_id] || 75;
+                        const salePrice = item.cost_price * (1 + warehouseMarkup / 100);
+                        
+                        console.log(`💰 ${item.sku}: WH${item.warehouse_id} = ${warehouseMarkup}% → $${salePrice.toFixed(2)}`);
+                        
+                        return {
+                            sku: item.sku,
+                            name: `${item.sku}`,
+                            brand: 'Proveedor',
+                            cost_price: item.cost_price,
+                            sale_price: salePrice, // 🔧 ARREGLADO: Markup real
+                            stock_disponible: item.quantity,
+                            supplier_id: null,
+                            supplier_name: `Warehouse ${item.warehouse_id}`,
+                            source: 'supplier',
+                            warehouse_id: item.warehouse_id
+                        };
+                    });
 
-                // Combinar y ordenar resultados
+                // Combinar y ordenar resultados (SIN CAMBIOS)
                 const allResults = [...inventoryResults, ...supplierResults]
                     .sort((a, b) => {
                         const aSkuMatch = (a.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -167,7 +214,7 @@ const CreateComboModal = ({ show, onClose }) => {
         const timeoutId = setTimeout(searchProducts, 300);
         return () => clearTimeout(timeoutId);
         
-    }, [searchTerm, products, suppliers, selectedComponents]);
+    }, [searchTerm, products, suppliers, selectedComponents, warehouseMarkups]); // 🔧 Agregado warehouseMarkups
 
     // Manejar cambios en el formulario
     const handleInputChange = (field, value) => {
